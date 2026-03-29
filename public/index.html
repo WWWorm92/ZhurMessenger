@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#2f94f3" />
+    <title>Pulse Messenger</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=Nunito+Sans:wght@400;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="ambient ambient-a"></div>
+    <div class="ambient ambient-b"></div>
+    <div class="noise-layer"></div>
+    <div id="overlay" class="overlay hidden"></div>
+
+    <main class="root">
+      <section id="authView" class="auth-view">
+        <div class="auth-card">
+
+          <form id="authForm" class="stack">
+            <label>
+              <span>Логин</span>
+              <input id="usernameInput" type="text" minlength="3" maxlength="24" required />
+            </label>
+
+            <label id="displayNameField" class="hidden">
+              <span>Имя в чате</span>
+              <input id="displayNameInput" type="text" minlength="2" maxlength="40" />
+            </label>
+
+            <label id="avatarField" class="hidden">
+              <span>Аватарка</span>
+              <input id="avatarInput" type="file" accept="image/*" />
+            </label>
+
+            <label>
+              <span>Пароль</span>
+              <input id="passwordInput" type="password" minlength="6" required />
+            </label>
+
+            <button id="authSubmitBtn" class="primary" type="submit">Войти</button>
+            <p id="authError" class="error"></p>
+          </form>
+        </div>
+      </section>
+
+      <section id="chatView" class="chat-view hidden">
+        <div class="app-shell">
+          <aside id="leftPanel" class="left-panel panel">
+            <header class="left-head">
+              <div class="me-mini">
+                <div id="meAvatar" class="avatar"></div>
+                <div>
+                  <h2 id="meName">Пользователь</h2>
+                  <p id="meUsername">@username</p>
+                </div>
+              </div>
+              <button id="openMenuBtn" class="icon-btn" type="button">☰</button>
+            </header>
+
+            <div class="search-wrap">
+              <input id="chatSearchInput" type="text" placeholder="Поиск по чатам" />
+            </div>
+
+            <div class="segmented compact">
+              <button id="dmTab" class="seg-btn active" type="button">Личные</button>
+              <button id="roomsTab" class="seg-btn" type="button">Комнаты</button>
+            </div>
+
+            <div id="roomActions" class="room-actions hidden">
+              <button id="createRoomBtn" class="ghost" type="button">Новая</button>
+              <button id="invitationsBtn" class="ghost" type="button">Приглашения</button>
+            </div>
+
+            <div id="listFilters" class="list-filters">
+              <button class="filter-chip active" data-list-filter="all" type="button">Все</button>
+              <button class="filter-chip" data-list-filter="unread" type="button">Непрочитанные</button>
+              <button class="filter-chip" data-list-filter="archived" type="button">Архив</button>
+            </div>
+
+            <ul id="entityList" class="chat-list"></ul>
+          </aside>
+
+          <section class="center-panel panel">
+            <header class="chat-head">
+              <button id="openChatsBtn" class="icon-btn mobile-only" type="button">☰</button>
+              <div class="chat-head-main">
+                <div id="chatHeadAvatar" class="avatar"></div>
+                <div>
+                  <h3 id="chatTitle">Выберите чат</h3>
+                  <p id="chatStatus">Личные и групповые диалоги</p>
+                </div>
+              </div>
+              <div class="chat-head-actions">
+                <button id="chatActionsBtn" class="ghost chat-actions-trigger" type="button">Действия ▾</button>
+              </div>
+            </header>
+
+            <div id="messages" class="messages"></div>
+            <div id="stickyDayLabel" class="sticky-day hidden"></div>
+            <button id="jumpBottomBtn" class="ghost jump-bottom hidden" type="button">Новые ↓</button>
+
+            <form id="messageForm" class="composer">
+              <div id="composeMeta" class="compose-meta hidden">
+                <span id="composeMetaText"></span>
+                <button id="composeMetaCancel" class="ghost" type="button">Отмена</button>
+              </div>
+              <div id="imagePreviewBar" class="image-preview-bar hidden">
+                <img id="imagePreviewThumb" alt="preview" />
+                <div class="image-preview-meta">
+                  <strong id="imagePreviewName">Изображение</strong>
+                  <p class="msg-time">Проверьте перед отправкой</p>
+                </div>
+                <button id="imagePreviewSendBtn" class="ghost" type="button">Отправить</button>
+                <button id="imagePreviewCancelBtn" class="ghost" type="button">✕</button>
+              </div>
+              <div id="uploadProgress" class="upload-progress hidden"></div>
+
+              <div class="composer-row">
+                <input id="imageInput" type="file" accept="image/*" class="hidden" />
+                <button id="attachToggleBtn" class="icon-btn" type="button">＋</button>
+                <button id="emojiToggle" class="icon-btn" type="button">😊</button>
+                <input id="messageInput" type="text" maxlength="2000" placeholder="Сообщение..." disabled />
+                <button id="sendBtn" class="primary" type="submit" disabled>Отправить</button>
+              </div>
+
+              <div id="attachMenu" class="attach-menu hidden">
+                <button id="imageBtn" type="button">🖼 Изображение</button>
+                <button id="pollBtn" type="button">📊 Опрос</button>
+              </div>
+
+              <div id="emojiPanel" class="emoji-panel hidden"></div>
+            </form>
+          </section>
+
+          <aside id="sideMenu" class="side-menu panel">
+            <header class="drawer-head">
+              <h3>Меню</h3>
+              <button id="closeMenuBtn" class="icon-btn" type="button">✕</button>
+            </header>
+
+            <div class="menu-account">
+              <div id="menuMeAvatar" class="avatar"></div>
+              <div>
+                <strong id="menuMeName">Пользователь</strong>
+                <p id="menuMeUsername" class="msg-time">@username</p>
+              </div>
+            </div>
+
+            <nav class="menu-actions">
+              <button id="menuProfileBtn" class="menu-link" type="button">
+                <span class="menu-link-icon">👤</span>
+                <span class="menu-link-main"><strong>Профиль</strong><small>Имя, аватар и пароль</small></span>
+              </button>
+              <button id="menuAdminBtn" class="menu-link hidden" type="button">
+                <span class="menu-link-icon">🛡️</span>
+                <span class="menu-link-main"><strong>Admin Console</strong><small>Пользователи и права</small></span>
+              </button>
+              <button id="menuSettingsBtn" class="menu-link" type="button">
+                <span class="menu-link-icon">⚙️</span>
+                <span class="menu-link-main"><strong>Настройки</strong><small>Тема и интерфейс</small></span>
+              </button>
+              <button id="menuContactsBtn" class="menu-link" type="button">
+                <span class="menu-link-icon">💬</span>
+                <span class="menu-link-main"><strong>Контакты</strong><small>Быстрый старт диалога</small></span>
+              </button>
+              <button id="menuAboutBtn" class="menu-link" type="button">
+                <span class="menu-link-icon">ℹ️</span>
+                <span class="menu-link-main"><strong>О приложении</strong><small>Версия и возможности</small></span>
+              </button>
+            </nav>
+
+            <button id="logoutBtn" class="ghost danger menu-logout" type="button">Выйти</button>
+          </aside>
+        </div>
+      </section>
+    </main>
+
+    <div id="sheet" class="sheet hidden">
+      <div class="sheet-card">
+        <header>
+          <h3 id="sheetTitle">Действие</h3>
+          <button id="sheetClose" class="icon-btn" type="button">✕</button>
+        </header>
+        <form id="sheetForm" class="stack">
+          <div id="sheetBody"></div>
+          <button id="sheetSubmit" class="primary" type="submit">Сохранить</button>
+        </form>
+      </div>
+    </div>
+
+    <div id="contextMenu" class="context-menu hidden"></div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="./app.js"></script>
+  </body>
+</html>

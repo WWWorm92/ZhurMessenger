@@ -1,0 +1,25 @@
+{
+  "name": "messenger",
+  "version": "1.0.0",
+  "description": "Realtime messenger with auth",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "nodemon server/index.js",
+    "cert:dev": "bash scripts/gen-dev-cert.sh",
+    "start:https": "HTTPS_KEY_PATH=certs/localhost-key.pem HTTPS_CERT_PATH=certs/localhost-cert.pem node server/index.js",
+    "dev:https": "HTTPS_KEY_PATH=certs/localhost-key.pem HTTPS_CERT_PATH=certs/localhost-cert.pem nodemon server/index.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "express": "^4.21.2",
+    "jsonwebtoken": "^9.0.2",
+    "multer": "^1.4.5-lts.1",
+    "socket.io": "^4.8.1",
+    "sqlite3": "^5.1.7"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.10"
+  }
+}

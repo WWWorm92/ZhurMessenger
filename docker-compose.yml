@@ -1,0 +1,12 @@
+services:
+  messenger:
+    build: .
+    container_name: pulse-messenger
+    restart: unless-stopped
+    ports:
+      - "3010:3010"
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+      - ./uploads:/app/uploads
