@@ -35,6 +35,20 @@ npm start
 
 Open `http://localhost:3010` or configure `PORT` in `.env`.
 
+## One-command Install
+
+For Ubuntu, Debian, and Raspberry Pi OS there is a ready installer:
+
+```bash
+sudo bash scripts/install-anywhere.sh
+```
+
+Optional variables:
+
+```bash
+sudo DOMAIN=chat.example.com APP_DIR=/opt/ZhurMessenger bash scripts/install-anywhere.sh
+```
+
 ## Environment Variables
 
 Copy `.env.example` and adjust values.
@@ -52,6 +66,8 @@ Copy `.env.example` and adjust values.
 - `WEB_PUSH_PUBLIC_KEY` - optional web-push public key
 
 ## Deploy Anywhere
+
+Full migration guide: `DEPLOY.md`
 
 ### Option 1: Plain Node + reverse proxy
 
