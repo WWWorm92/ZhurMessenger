@@ -49,6 +49,31 @@ Optional variables:
 sudo DOMAIN=chat.example.com APP_DIR=/opt/ZhurMessenger bash scripts/install-anywhere.sh
 ```
 
+## Automatic Updates From GitHub
+
+The project includes a polling auto-updater for Linux servers.
+
+Install it:
+
+```bash
+sudo bash scripts/install-auto-update.sh
+```
+
+What it does:
+
+- checks `origin/main` every 2 minutes
+- if new commits exist, runs `git pull --ff-only`
+- installs dependencies
+- restarts `zhur-messenger`
+- creates lightweight backups of DB/uploads before update
+
+Useful commands:
+
+```bash
+systemctl status zhur-messenger-update.timer
+journalctl -u zhur-messenger-update.service -f
+```
+
 ## Environment Variables
 
 Copy `.env.example` and adjust values.

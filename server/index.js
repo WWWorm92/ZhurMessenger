@@ -662,6 +662,63 @@ async function appendRoomAudit(roomId, actorUserId, action, { targetUserId = nul
   );
 }
 
+async function deleteRoomCascade(roomId, actorUserId = null) {
+  const room = await get("SELECT * FROM chat_rooms WHERE id = ?", [roomId]);
+  if (!room) {
+    return null;
+  }
+
+  const memberRows = await all("SELECT user_id FROM room_members WHERE room_id = ?", [roomId]);
+  const memberIds = [...new Set(memberRows.map((item) => item.user_id))];
+
+  const roomMessages = await all("SELECT id, poll_id FROM room_messages WHERE room_id = ?", [roomId]);
+  const roomMessageIds = roomMessages.map((item) => item.id);
+  const pollIds = [...new Set(roomMessages.map((item) => item.poll_id).filter(Boolean))];
+
+  if (roomMessageIds.length) {
+    const msgPlaceholders = roomMessageIds.map(() => "?").join(", ");
+    await run(
+      `DELETE FROM message_reactions WHERE scope = 'room' AND message_id IN (${msgPlaceholders})`,
+      roomMessageIds
+    );
+  }
+
+  if (pollIds.length) {
+    const pollPlaceholders = pollIds.map(() => "?").join(", ");
+    await run(`DELETE FROM poll_votes WHERE poll_id IN (${pollPlaceholders})`, pollIds);
+    await run(`DELETE FROM poll_options WHERE poll_id IN (${pollPlaceholders})`, pollIds);
+    await run(`DELETE FROM polls WHERE id IN (${pollPlaceholders})`, pollIds);
+  }
+
+  if (actorUserId) {
+    await appendRoomAudit(roomId, actorUserId, "room_deleted", {
+      payload: { deletedMessages: roomMessageIds.length },
+    });
+  }
+
+  await run("DELETE FROM room_messages WHERE room_id = ?", [roomId]);
+  await run("DELETE FROM room_reads WHERE room_id = ?", [roomId]);
+  await run("DELETE FROM room_members WHERE room_id = ?", [roomId]);
+  await run("DELETE FROM room_invitations WHERE room_id = ?", [roomId]);
+  await run("DELETE FROM room_audit_log WHERE room_id = ?", [roomId]);
+  await run("DELETE FROM pinned_messages WHERE scope = 'room' AND target_id = ?", [roomId]);
+  await run("DELETE FROM user_chat_prefs WHERE scope = 'room' AND target_id = ?", [roomId]);
+  await run("DELETE FROM chat_rooms WHERE id = ?", [roomId]);
+
+  io.emit("rooms:update");
+  for (const userId of memberIds) {
+    const sockets = socketsByUser.get(userId);
+    if (!sockets) {
+      continue;
+    }
+    for (const socketId of sockets) {
+      io.to(socketId).emit("room:deleted", { roomId });
+    }
+  }
+
+  return { room, memberIds, deletedMessages: roomMessageIds.length };
+}
+
 async function requireAdmin(req, res, next) {
   try {
     const row = await get("SELECT is_admin FROM users WHERE id = ?", [req.user.id]);
@@ -2143,48 +2200,8 @@ app.delete("/api/rooms/:roomId", authMiddleware, async (req, res) => {
       return;
     }
 
-    const memberRows = await all("SELECT user_id FROM room_members WHERE room_id = ?", [roomId]);
-    const memberIds = [...new Set(memberRows.map((item) => item.user_id))];
-
-    const roomMessages = await all("SELECT id, poll_id FROM room_messages WHERE room_id = ?", [roomId]);
-    const roomMessageIds = roomMessages.map((item) => item.id);
-    const pollIds = [...new Set(roomMessages.map((item) => item.poll_id).filter(Boolean))];
-
-    if (roomMessageIds.length) {
-      const msgPlaceholders = roomMessageIds.map(() => "?").join(", ");
-      await run(
-        `DELETE FROM message_reactions WHERE scope = 'room' AND message_id IN (${msgPlaceholders})`,
-        roomMessageIds
-      );
-    }
-
-    if (pollIds.length) {
-      const pollPlaceholders = pollIds.map(() => "?").join(", ");
-      await run(`DELETE FROM poll_votes WHERE poll_id IN (${pollPlaceholders})`, pollIds);
-      await run(`DELETE FROM poll_options WHERE poll_id IN (${pollPlaceholders})`, pollIds);
-      await run(`DELETE FROM polls WHERE id IN (${pollPlaceholders})`, pollIds);
-    }
-
-    await appendRoomAudit(roomId, req.user.id, "room_deleted", {
-      payload: { deletedMessages: roomMessageIds.length },
-    });
-
-    await run("DELETE FROM room_messages WHERE room_id = ?", [roomId]);
-    await run("DELETE FROM room_members WHERE room_id = ?", [roomId]);
-    await run("DELETE FROM chat_rooms WHERE id = ?", [roomId]);
-
-    io.emit("rooms:update");
-    for (const userId of memberIds) {
-      const sockets = socketsByUser.get(userId);
-      if (!sockets) {
-        continue;
-      }
-      for (const socketId of sockets) {
-        io.to(socketId).emit("room:deleted", { roomId });
-      }
-    }
-
-    res.json({ ok: true, roomId, deletedMessages: roomMessageIds.length });
+    const result = await deleteRoomCascade(roomId, req.user.id);
+    res.json({ ok: true, roomId, deletedMessages: result?.deletedMessages || 0 });
   } catch (error) {
     res.status(500).json({ error: "Internal server error" });
   }
@@ -3608,6 +3625,84 @@ app.patch("/api/admin/users/:userId/password", authMiddleware, requireAdmin, asy
     const passwordHash = await bcrypt.hash(newPassword, 10);
     await run("UPDATE users SET password_hash = ? WHERE id = ?", [passwordHash, userId]);
     res.json({ ok: true });
+  } catch (error) {
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+app.delete("/api/admin/users/:userId", authMiddleware, requireAdmin, async (req, res) => {
+  try {
+    const userId = mustBeValidId(req.params.userId);
+    if (!userId) {
+      res.status(400).json({ error: "Invalid user id" });
+      return;
+    }
+
+    if (userId === req.user.id) {
+      res.status(400).json({ error: "You cannot delete your own account" });
+      return;
+    }
+
+    const user = await get("SELECT id, username, display_name FROM users WHERE id = ?", [userId]);
+    if (!user) {
+      res.status(404).json({ error: "User not found" });
+      return;
+    }
+
+    const ownedRooms = await all("SELECT id FROM chat_rooms WHERE created_by = ?", [userId]);
+    for (const room of ownedRooms) {
+      await deleteRoomCascade(room.id, req.user.id);
+    }
+
+    const dmRows = await all(
+      "SELECT id, poll_id FROM messages WHERE sender_id = ? OR receiver_id = ?",
+      [userId, userId]
+    );
+    const dmMessageIds = dmRows.map((item) => item.id);
+    const dmPollIds = [...new Set(dmRows.map((item) => item.poll_id).filter(Boolean))];
+
+    const ownRoomRows = await all("SELECT id, poll_id FROM room_messages WHERE sender_id = ?", [userId]);
+    const ownRoomMessageIds = ownRoomRows.map((item) => item.id);
+    const ownRoomPollIds = [...new Set(ownRoomRows.map((item) => item.poll_id).filter(Boolean))];
+
+    const allPollIds = [...new Set([...dmPollIds, ...ownRoomPollIds])];
+
+    if (dmMessageIds.length) {
+      const placeholders = dmMessageIds.map(() => "?").join(", ");
+      await run(`DELETE FROM message_reactions WHERE scope = 'dm' AND message_id IN (${placeholders})`, dmMessageIds);
+    }
+    if (ownRoomMessageIds.length) {
+      const placeholders = ownRoomMessageIds.map(() => "?").join(", ");
+      await run(
+        `DELETE FROM message_reactions WHERE scope = 'room' AND message_id IN (${placeholders})`,
+        ownRoomMessageIds
+      );
+    }
+    if (allPollIds.length) {
+      const placeholders = allPollIds.map(() => "?").join(", ");
+      await run(`DELETE FROM poll_votes WHERE poll_id IN (${placeholders}) OR user_id = ?`, [...allPollIds, userId]);
+      await run(`DELETE FROM poll_options WHERE poll_id IN (${placeholders})`, allPollIds);
+      await run(`DELETE FROM polls WHERE id IN (${placeholders})`, allPollIds);
+    } else {
+      await run("DELETE FROM poll_votes WHERE user_id = ?", [userId]);
+    }
+
+    await run("DELETE FROM messages WHERE sender_id = ? OR receiver_id = ?", [userId, userId]);
+    await run("DELETE FROM room_messages WHERE sender_id = ?", [userId]);
+    await run("DELETE FROM room_members WHERE user_id = ?", [userId]);
+    await run("DELETE FROM room_invitations WHERE user_id = ? OR invited_by = ?", [userId, userId]);
+    await run("DELETE FROM dm_reads WHERE user_id = ? OR peer_id = ?", [userId, userId]);
+    await run("DELETE FROM room_reads WHERE user_id = ?", [userId]);
+    await run("DELETE FROM pinned_messages WHERE pinned_by = ?", [userId]);
+    await run("DELETE FROM user_chat_prefs WHERE user_id = ?", [userId]);
+    await run("DELETE FROM push_subscriptions WHERE user_id = ?", [userId]);
+    await run("DELETE FROM user_sessions WHERE user_id = ?", [userId]);
+    await run("DELETE FROM room_audit_log WHERE actor_user_id = ? OR target_user_id = ?", [userId, userId]);
+    await run("DELETE FROM users WHERE id = ?", [userId]);
+
+    io.emit("users:update");
+    io.emit("rooms:update");
+    res.json({ ok: true, deletedUserId: userId });
   } catch (error) {
     res.status(500).json({ error: "Internal server error" });
   }

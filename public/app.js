@@ -2,6 +2,7 @@ const EMOJIS = ["😀", "😎", "😂", "😍", "🥳", "👍", "🔥", "❤️"
 const REGISTRATION_ENABLED = false;
 const DOM_WINDOW_SIZE = 220;
 const DOM_WINDOW_STEP = 90;
+const APP_VERSION = "2026.03.30-1";
 
 const state = {
   mode: "login",
@@ -34,6 +35,7 @@ const state = {
   socket: null,
   swRegistration: null,
   notificationsEnabled: localStorage.getItem("notificationsEnabled") !== "0",
+  remoteVersion: APP_VERSION,
   theme: localStorage.getItem("theme") || "light",
 };
 
@@ -46,6 +48,9 @@ let refreshInFlight = null;
 
 const els = {
   overlay: document.getElementById("overlay"),
+  toastStack: document.getElementById("toastStack"),
+  updateBanner: document.getElementById("updateBanner"),
+  reloadAppBtn: document.getElementById("reloadAppBtn"),
   authView: document.getElementById("authView"),
   chatView: document.getElementById("chatView"),
   loginTab: document.getElementById("loginTab"),
@@ -68,6 +73,8 @@ const els = {
   menuAdminBtn: document.getElementById("menuAdminBtn"),
   menuSettingsBtn: document.getElementById("menuSettingsBtn"),
   menuContactsBtn: document.getElementById("menuContactsBtn"),
+  menuInvitesBtn: document.getElementById("menuInvitesBtn"),
+  menuInvitesBadge: document.getElementById("menuInvitesBadge"),
   menuAboutBtn: document.getElementById("menuAboutBtn"),
   meAvatar: document.getElementById("meAvatar"),
   meName: document.getElementById("meName"),
@@ -79,6 +86,8 @@ const els = {
   dmTab: document.getElementById("dmTab"),
   roomsTab: document.getElementById("roomsTab"),
   roomActions: document.getElementById("roomActions"),
+  roomTools: document.getElementById("roomTools"),
+  roomToolsMeta: document.getElementById("roomToolsMeta"),
   createRoomBtn: document.getElementById("createRoomBtn"),
   invitationsBtn: document.getElementById("invitationsBtn"),
   listFilters: document.getElementById("listFilters"),
@@ -128,6 +137,43 @@ function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
+function showToast(message, type = "info") {
+  if (!els.toastStack || !message) {
+    return;
+  }
+  const toast = document.createElement("div");
+  toast.className = `toast ${type}`;
+  toast.innerHTML = `<strong>${type === "error" ? "Ошибка" : type === "success" ? "Готово" : "Сообщение"}</strong><p>${escapeHtml(message)}</p>`;
+  els.toastStack.appendChild(toast);
+  requestAnimationFrame(() => toast.classList.add("visible"));
+  const cleanup = () => {
+    toast.classList.remove("visible");
+    setTimeout(() => toast.remove(), 180);
+  };
+  toast.addEventListener("click", cleanup);
+  setTimeout(cleanup, 3200);
+}
+
+function refreshUpdateBanner() {
+  const hasUpdate = Boolean(state.remoteVersion && state.remoteVersion !== APP_VERSION);
+  els.updateBanner?.classList.toggle("hidden", !hasUpdate);
+}
+
+async function checkForAppUpdate() {
+  try {
+    const response = await fetch(`/version.json?v=${Date.now()}`, { cache: "no-store" });
+    const data = await response.json().catch(() => ({}));
+    state.remoteVersion = String(data.version || APP_VERSION);
+    refreshUpdateBanner();
+  } catch (error) {
+    // ignore update check errors
+  }
+}
+
+window.alert = (message) => {
+  showToast(String(message || ""), "error");
+};
+
 function applyTheme(theme) {
   const normalized = theme === "dark" ? "dark" : "light";
   state.theme = normalized;
@@ -174,6 +220,28 @@ function avatarMarkup(entity) {
     return `<img src="${image}" alt="${name}" />`;
   }
   return escapeHtml(initials(name));
+}
+
+function iconSvg(name) {
+  const icons = {
+    room: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="6" width="14" height="12" rx="3" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M9 10h6M9 14h4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>',
+    lock: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 10V8a4 4 0 1 1 8 0v2M7 10h10a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" stroke-linecap="round"/></svg>',
+    chat: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 7.5h12a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2H9l-4 3v-3H6a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>',
+    image: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4.5" y="5.5" width="15" height="13" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.7"/><circle cx="9" cy="10" r="1.2" fill="currentColor"/><path d="m7 16 3.2-3.2a1 1 0 0 1 1.4 0l1.8 1.8 2.1-2.1a1 1 0 0 1 1.4 0L18 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    poll: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 18V9M12 18V6M18 18v-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M4 18h16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>',
+    pin: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 5 6 6m-1.5-4.5 3 3-2 2 .5 4.5-1.5 1.5-4.5-.5-2 2-3-3 2-2-.5-4.5L7 8l2-2Z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round"/></svg>',
+    mute: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 14h3l4 3V7L8 10H5v4ZM17 10l4 4M21 10l-4 4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    plus: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>',
+    smile: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M9 10h.01M15 10h.01" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/><path d="M9 14c.8.9 1.8 1.3 3 1.3s2.2-.4 3-1.3" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    more: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="12" r="1.6" fill="currentColor"/><circle cx="12" cy="12" r="1.6" fill="currentColor"/><circle cx="18" cy="12" r="1.6" fill="currentColor"/></svg>',
+    arrowRight: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 7l5 5-5 5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    composeSend: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 13-6-3.5 12-4-4-5.5-2Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/></svg>',
+  };
+  return icons[name] || icons.chat;
+}
+
+function iconMarkup(name, extraClass = "") {
+  return `<span class="ui-icon ${extraClass}" aria-hidden="true">${iconSvg(name)}</span>`;
 }
 
 function isPrivateRoom(room) {
@@ -769,6 +837,27 @@ function openSheet(title, submitText, bodyHtml, onSubmit, actions = []) {
   els.sheetForm.onsubmit = handler;
 }
 
+function renderSheetLoading(title, lines = 3) {
+  openSheet(
+    title,
+    "",
+    `
+      <div class="stack settings-layout">
+        <section class="settings-hero skeleton-card">
+          <div class="skeleton-line lg"></div>
+          <div class="skeleton-line"></div>
+        </section>
+        <section class="settings-card skeleton-card">
+          ${Array.from({ length: lines })
+            .map(() => `<div class="skeleton-line"></div>`)
+            .join("")}
+        </section>
+      </div>
+    `,
+    async () => {}
+  );
+}
+
 function closeSheet() {
   els.sheet.classList.add("hidden");
   els.sheetBody.innerHTML = "";
@@ -933,7 +1022,7 @@ function attachSwipeActions(element, { leftLabel, rightLabel, onLeft, onRight })
   element.addEventListener("touchcancel", reset, { passive: true });
 }
 
-function showContextMenu(x, y, items = []) {
+function showContextMenu(x, y, items = [], options = {}) {
   if (!items.length) {
     hideContextMenu();
     return;
@@ -946,14 +1035,25 @@ function showContextMenu(x, y, items = []) {
     )
     .join("");
 
+  const mobileSheetMode = options.forceFloating ? false : (window.innerWidth <= 900 || isTouchDevice());
   els.contextMenu.classList.remove("hidden");
-  const menuRect = els.contextMenu.getBoundingClientRect();
-  const maxX = window.innerWidth - menuRect.width - 8;
-  const maxY = window.innerHeight - menuRect.height - 8;
-  const left = Math.max(8, Math.min(x, maxX));
-  const top = Math.max(8, Math.min(y, maxY));
-  els.contextMenu.style.left = `${left}px`;
-  els.contextMenu.style.top = `${top}px`;
+  els.contextMenu.classList.toggle("mobile-sheet", mobileSheetMode);
+  if (mobileSheetMode) {
+    els.contextMenu.style.left = "12px";
+    els.contextMenu.style.right = "12px";
+    els.contextMenu.style.top = "auto";
+    els.contextMenu.style.bottom = "12px";
+  } else {
+    els.contextMenu.style.right = "auto";
+    els.contextMenu.style.bottom = "auto";
+    const menuRect = els.contextMenu.getBoundingClientRect();
+    const maxX = window.innerWidth - menuRect.width - 8;
+    const maxY = window.innerHeight - menuRect.height - 8;
+    const left = Math.max(8, Math.min(x, maxX));
+    const top = Math.max(8, Math.min(y, maxY));
+    els.contextMenu.style.left = `${left}px`;
+    els.contextMenu.style.top = `${top}px`;
+  }
 
   els.contextMenu.querySelectorAll("[data-ctx-index]").forEach((button) => {
     button.addEventListener("click", async () => {
@@ -1039,6 +1139,7 @@ function setListMode(mode) {
   els.dmTab.classList.toggle("active", mode === "dm");
   els.roomsTab.classList.toggle("active", mode === "room");
   els.roomActions.classList.toggle("hidden", mode !== "room");
+  els.roomTools?.classList.toggle("hidden", mode !== "room");
   refreshListFiltersUI();
   renderEntityList();
   updateChatHeader();
@@ -1100,6 +1201,10 @@ function refreshInvitationsButton() {
   }
   const count = invitationCount();
   els.invitationsBtn.innerHTML = count > 0 ? `Приглашения <span class="btn-badge">${count > 99 ? "99+" : count}</span>` : "Приглашения";
+  if (els.menuInvitesBadge) {
+    els.menuInvitesBadge.classList.toggle("hidden", count <= 0);
+    els.menuInvitesBadge.textContent = count > 99 ? "99+" : String(count);
+  }
 }
 
 function renderMe() {
@@ -1292,11 +1397,16 @@ function buildRoomContextItems(room) {
 
 function renderEntityList() {
   els.entityList.innerHTML = "";
+  if (els.roomToolsMeta) {
+    const roomCount = state.rooms.filter((room) => !room.archived).length;
+    const inviteCount = invitationCount();
+    els.roomToolsMeta.textContent = inviteCount ? `${roomCount} комнат · ${inviteCount} приглаш.` : `${roomCount} комнат доступно`;
+  }
   if (state.listMode === "dm") {
     const users = filteredUsers();
     if (!users.length) {
       const label = state.listFilter === "archived" ? "Архив пуст" : "Никого не найдено";
-      els.entityList.innerHTML = `<li class='chat-item'><div class='chat-item-main'><p>${label}</p></div></li>`;
+      els.entityList.innerHTML = `<li class='empty-panel'><strong>${label}</strong><p class='msg-time'>${state.search ? "Попробуйте изменить запрос поиска" : "Откройте контакты или дождитесь нового диалога"}</p></li>`;
       return;
     }
 
@@ -1304,19 +1414,29 @@ function renderEntityList() {
       const li = document.createElement("li");
       li.className = "chat-item";
       li.classList.toggle("active", state.selected?.type === "dm" && state.selected.id === user.id);
+      const secondary = user.lastMessageAt
+      ? `${user.lastMessageType === "image" ? `${iconMarkup("image", "inline-icon")}` : user.lastMessageType === "poll" ? `${iconMarkup("poll", "inline-icon")}` : ""}${escapeHtml((user.lastMessage || "").slice(0, 52) || "[медиа]")}`
+        : `@${escapeHtml(user.username)} ${state.onlineIds.has(user.id) ? "· онлайн" : "· офлайн"}`;
       li.innerHTML = `
         <div class="avatar">${avatarMarkup(user)}</div>
         <div class="chat-item-main">
-          <strong>${escapeHtml(user.displayName)}${user.isAdmin ? " 👑" : ""}</strong>
-          <p>${user.lastMessageAt ? `${user.lastMessageType === "image" ? "🖼 " : user.lastMessageType === "poll" ? "📊 " : ""}${escapeHtml((user.lastMessage || "").slice(0, 44) || "[медиа]")}` : `@${escapeHtml(user.username)} ${state.onlineIds.has(user.id) ? "· онлайн" : "· офлайн"}`}</p>
+          <div class="room-card-headline">
+            <strong>${escapeHtml(user.displayName)}${user.isAdmin ? " 👑" : ""}</strong>
+            <span class="msg-time">${user.lastMessageAt ? formatTime(user.lastMessageAt) : state.onlineIds.has(user.id) ? "online" : "offline"}</span>
+          </div>
+          <div class="room-card-badges">
+            <span class="chat-item-badge dm">dialog</span>
+            ${state.onlineIds.has(user.id) ? `<span class="chat-item-badge online">online</span>` : ""}
+            ${user.isAdmin ? `<span class="chat-item-badge manage">admin</span>` : ""}
+          </div>
+          <p>${secondary}</p>
         </div>
         <div class="chat-item-tail">
-          ${user.pinned ? `<span class="chat-mini-flag">📌</span>` : ""}
-          ${user.muted ? `<span class="chat-mini-flag">🔕</span>` : ""}
-          <span class="presence ${state.onlineIds.has(user.id) ? "online" : ""}"></span>
+          ${user.pinned ? `<span class="chat-mini-flag">${iconMarkup("pin", "xs")}</span>` : ""}
+          ${user.muted ? `<span class="chat-mini-flag">${iconMarkup("mute", "xs")}</span>` : ""}
           ${user.unreadCount ? `<span class="chat-unread">${user.unreadCount > 99 ? "99+" : user.unreadCount}</span>` : ""}
-          <span class="chat-item-arrow">${user.lastMessageAt ? formatTime(user.lastMessageAt) : "›"}</span>
-          <button type="button" class="chat-more-btn" data-item-menu="dm" aria-label="Действия">⋯</button>
+          <span class="chat-item-arrow">${iconMarkup("arrowRight", "xs")}</span>
+          <button type="button" class="chat-more-btn" data-item-menu="dm" aria-label="Действия">${iconMarkup("more", "xs")}</button>
         </div>
       `;
       li.addEventListener("click", () => {
@@ -1352,7 +1472,7 @@ function renderEntityList() {
   const rooms = filteredRooms();
   if (!rooms.length) {
     const label = state.listFilter === "archived" ? "Архив комнат пуст" : "Комнаты не найдены";
-    els.entityList.innerHTML = `<li class='chat-item'><div class='chat-item-main'><p>${label}</p></div></li>`;
+    els.entityList.innerHTML = `<li class='empty-panel'><strong>${label}</strong><p class='msg-time'>${state.search ? "Попробуйте изменить запрос поиска" : "Создайте комнату или примите приглашение"}</p></li>`;
     return;
   }
 
@@ -1360,21 +1480,34 @@ function renderEntityList() {
     const li = document.createElement("li");
     li.className = "chat-item";
     li.classList.toggle("active", state.selected?.type === "room" && state.selected.id === room.id);
-    const icon = isPrivateRoom(room) ? "🔒" : "🌍";
+    const icon = isPrivateRoom(room) ? iconMarkup("lock") : iconMarkup("room");
+    const secondary = room.lastMessageAt
+      ? `${room.lastMessageType === "image" ? `${iconMarkup("image", "inline-icon")}` : room.lastMessageType === "poll" ? `${iconMarkup("poll", "inline-icon")}` : ""}${escapeHtml((room.lastMessage || "").slice(0, 52) || "[медиа]")}`
+      : room.joined
+        ? `Участников: ${room.membersCount}`
+        : room.hasInvitation
+          ? "Есть приглашение"
+          : "Запроси приглашение";
     li.innerHTML = `
       <div class="avatar">${icon}</div>
       <div class="chat-item-main">
-        <strong>${escapeHtml(room.name)}</strong>
-        <p>${room.lastMessageAt ? `${room.lastMessageType === "image" ? "🖼 " : room.lastMessageType === "poll" ? "📊 " : ""}${escapeHtml((room.lastMessage || "").slice(0, 44) || "[медиа]")}` : room.joined ? `Участников: ${room.membersCount}` : room.hasInvitation ? "Есть приглашение" : "Запроси приглашение"}</p>
+        <div class="room-card-headline">
+          <strong>${escapeHtml(room.name)}</strong>
+          <span class="msg-time">${room.lastMessageAt ? formatTime(room.lastMessageAt) : room.joined ? "активно" : "новая"}</span>
+        </div>
+        <div class="room-card-badges">
+          <span class="chat-item-badge ${isPrivateRoom(room) ? "lock" : "public"}">${isPrivateRoom(room) ? "private" : "public"}</span>
+          ${room.hasInvitation ? `<span class="chat-item-badge invitation">invite</span>` : ""}
+          ${room.canManage ? `<span class="chat-item-badge manage">manage</span>` : ""}
+        </div>
+        <p>${secondary}</p>
       </div>
       <div class="chat-item-tail">
-        ${room.pinned ? `<span class="chat-mini-flag">📌</span>` : ""}
-        ${room.muted ? `<span class="chat-mini-flag">🔕</span>` : ""}
-        <span class="chat-item-badge ${isPrivateRoom(room) ? "lock" : "public"}">${isPrivateRoom(room) ? "private" : "public"}</span>
-        ${room.hasInvitation ? `<span class="chat-item-badge invitation">invite</span>` : ""}
+        ${room.pinned ? `<span class="chat-mini-flag">${iconMarkup("pin", "xs")}</span>` : ""}
+        ${room.muted ? `<span class="chat-mini-flag">${iconMarkup("mute", "xs")}</span>` : ""}
         ${room.unreadCount ? `<span class="chat-unread">${room.unreadCount > 99 ? "99+" : room.unreadCount}</span>` : ""}
-        <span class="chat-item-arrow">${room.lastMessageAt ? formatTime(room.lastMessageAt) : room.joined ? "›" : "＋"}</span>
-        <button type="button" class="chat-more-btn" data-item-menu="room" aria-label="Действия">⋯</button>
+        <span class="chat-item-arrow">${room.joined ? iconMarkup("arrowRight", "xs") : iconMarkup("plus", "xs")}</span>
+        <button type="button" class="chat-more-btn" data-item-menu="room" aria-label="Действия">${iconMarkup("more", "xs")}</button>
       </div>
     `;
     li.addEventListener("click", () => {
@@ -1593,12 +1726,19 @@ function renderMessages({ forceBottom = false } = {}) {
   const wasNearBottom = prevDistanceFromBottom <= 72;
   els.messages.innerHTML = "";
 
+  if (!state.selected) {
+    els.messages.innerHTML = `<div class="empty-chat-state"><strong>Выберите чат</strong><p class="msg-time">Личные диалоги, комнаты и приглашения появятся здесь. Начните с контактов или списка комнат.</p></div>`;
+    refreshJumpBottomButton();
+    refreshStickyDayLabel();
+    return;
+  }
+
   if (state.selected?.type === "dm") {
     const pinned = state.pinnedByDialogId.get(state.selected.id);
     if (pinned && !pinned.deletedAt) {
       const pin = document.createElement("div");
       pin.className = "pinned-banner";
-      pin.innerHTML = `<strong>📌 Закреплено:</strong> ${escapeHtml((pinned.content || "[медиа/опрос]").slice(0, 180))}`;
+      pin.innerHTML = `<strong>${iconMarkup("pin", "xs")}</strong> ${escapeHtml((pinned.content || "[медиа/опрос]").slice(0, 180))}`;
       pin.addEventListener("click", () => {
         const target = els.messages.querySelector(`[data-msg-id='${pinned.id}']`);
         if (target) {
@@ -1614,7 +1754,7 @@ function renderMessages({ forceBottom = false } = {}) {
     if (pinned && !pinned.deletedAt) {
       const pin = document.createElement("div");
       pin.className = "pinned-banner";
-      pin.innerHTML = `<strong>📌 Закреплено:</strong> ${escapeHtml((pinned.content || "[медиа/опрос]").slice(0, 180))}`;
+      pin.innerHTML = `<strong>${iconMarkup("pin", "xs")}</strong> ${escapeHtml((pinned.content || "[медиа/опрос]").slice(0, 180))}`;
       pin.addEventListener("click", () => {
         const target = els.messages.querySelector(`[data-msg-id='${pinned.id}']`);
         if (target) {
@@ -1635,6 +1775,16 @@ function renderMessages({ forceBottom = false } = {}) {
     }
   }
   const messages = allMessages.slice(start);
+  if (!messages.length) {
+    const title = state.selected.type === "room" ? "В комнате пока тихо" : "Диалог пока пуст";
+    const hint = state.selected.type === "room"
+      ? "Напишите первое сообщение, чтобы начать обсуждение."
+      : "Отправьте первое сообщение и начните разговор.";
+    els.messages.innerHTML = `<div class="empty-chat-state"><strong>${title}</strong><p class="msg-time">${hint}</p></div>`;
+    refreshJumpBottomButton();
+    refreshStickyDayLabel();
+    return;
+  }
   const peerReadAt = state.selected?.type === "dm" ? asUtcMs(state.dmReadByPeerId.get(state.selected.id)) : 0;
   const unreadStartId = Number(state.unseenStartByChatKey.get(selectedChatKey()) || 0);
   let prevMessage = null;
@@ -1830,7 +1980,7 @@ function updateChatHeader() {
   if (!state.selected) {
     els.chatTitle.textContent = "Выберите чат";
     els.chatStatus.textContent = "Личные и групповые диалоги";
-    els.chatHeadAvatar.innerHTML = "💬";
+    els.chatHeadAvatar.innerHTML = iconMarkup("chat");
     els.messageInput.disabled = true;
     els.sendBtn.disabled = true;
     return;
@@ -1860,7 +2010,7 @@ function updateChatHeader() {
     ? `Участников: ${room.membersCount}`
     : "Нажми, чтобы войти";
   els.chatStatus.textContent = resolveTypingStatus(roomBaseStatus);
-  els.chatHeadAvatar.innerHTML = isPrivateRoom(room) ? "🔒" : "🌍";
+  els.chatHeadAvatar.innerHTML = isPrivateRoom(room) ? iconMarkup("lock") : iconMarkup("room");
   const canPost = room.joined && room.canPost !== false;
   els.messageInput.disabled = !canPost;
   els.sendBtn.disabled = !canPost;
@@ -1997,8 +2147,13 @@ async function openRoomMembersSheet(roomId) {
 
   const settingsBlock = canOwn
     ? `
-      <div class="admin-box">
-        <h4>Настройки комнаты</h4>
+      <section class="settings-card">
+        <div class="settings-card-head">
+          <div>
+            <strong>Настройки комнаты</strong>
+            <p class="msg-time">Параметры доступа и поведения комнаты.</p>
+          </div>
+        </div>
         <label>
           <span>Название</span>
           <input name="roomName" minlength="2" maxlength="40" value="${escapeHtml(roomName)}" />
@@ -2024,12 +2179,12 @@ async function openRoomMembersSheet(roomId) {
             <option value="members" ${(room.whoCanInvite || "admins") === "members" ? "selected" : ""}>Все участники</option>
           </select>
         </label>
-      </div>
+      </section>
     `
     : "";
 
   const body = members.length
-    ? `${settingsBlock}<div id="roomMembersList" class="menu-contacts">${members
+    ? `${settingsBlock}<section class="settings-card"><div class="settings-card-head"><div><strong>Участники</strong><p class="msg-time">Управление ролями и доступом участников.</p></div></div><div id="roomMembersList" class="menu-contacts room-members-list">${members
         .map(
           (user) => `
         <div class="menu-contact-item ${canManage && user.id !== state.me?.id && user.id !== room.createdBy ? "with-action" : ""}">
@@ -2045,14 +2200,14 @@ async function openRoomMembersSheet(roomId) {
         </div>
       `
         )
-        .join("")}</div>`
-    : `${settingsBlock}<p class='msg-time'>Нет участников</p>`;
+        .join("")}</div></section>`
+    : `${settingsBlock}<section class="settings-card"><div class="settings-empty"><strong>Пусто</strong><p class='msg-time'>Нет участников</p></div></section>`;
 
   const leaveButton = room.joined && myRole !== "owner"
     ? `<button type="button" class="ghost danger" data-room-leave="${roomId}">Покинуть комнату</button>`
     : "";
 
-  const fullBody = `<div class="stack"><p class="msg-time">Роль: <strong>${roomRoleLabel(myRole)}</strong></p>${body}${canManage ? `<button type="button" class="ghost" data-room-audit="${roomId}">Журнал модерации</button>` : ""}${leaveButton}</div>`;
+  const fullBody = `<div class="stack settings-layout"><section class="settings-hero"><div><strong># ${escapeHtml(roomName)}</strong><p class="msg-time">Роль: ${escapeHtml(roomRoleLabel(myRole))} · ${room.accessType === "private" ? "закрытая" : "публичная"} комната</p></div></section>${body}${canManage ? `<section class="settings-card"><button type="button" class="ghost" data-room-audit="${roomId}">Журнал модерации</button></section>` : ""}${leaveButton ? `<section class="settings-card">${leaveButton}</section>` : ""}</div>`;
 
   const actions = canInvite
     ? [{ label: "Пригласить", onClick: () => { closeSheet(); openInviteUsersSheet(roomId); } }]
@@ -2257,12 +2412,14 @@ function renderInvitationItem(invitation) {
     : "Система";
 
   return `
-    <div class="invite-card" data-invite-id="${invitation.id}">
+    <div class="invite-card settings-card" data-invite-id="${invitation.id}">
       <div class="invite-head">
-        <strong># ${escapeHtml(invitation.roomName)}</strong>
-        <span class="msg-time">${formatTime(invitation.createdAt)}</span>
+        <div>
+          <strong># ${escapeHtml(invitation.roomName)}</strong>
+          <p class="msg-time">Пригласил: ${inviterLabel}</p>
+        </div>
+        <span class="role-chip admin">${formatTime(invitation.createdAt)}</span>
       </div>
-      <p class="msg-time">Пригласил: ${inviterLabel}</p>
       <div class="invite-actions">
         <button type="button" class="primary" data-invite-accept="${invitation.id}">Принять</button>
         <button type="button" class="ghost" data-invite-decline="${invitation.id}">Отклонить</button>
@@ -2320,8 +2477,26 @@ function openInvitationsSheet() {
 
   openSheet(
     "Мои приглашения",
-    "Закрыть",
-    list ? `<div class="stack">${list}</div>` : "<p class='msg-time'>Пока нет новых приглашений</p>",
+    "",
+    `
+      <div class="stack settings-layout">
+        <section class="settings-hero">
+          <div>
+            <strong>Приглашения в комнаты</strong>
+            <p class="msg-time">Здесь появляются персональные инвайты в закрытые комнаты.</p>
+          </div>
+        </section>
+        <section class="settings-card">
+          <div class="settings-card-head">
+            <div>
+              <strong>Входящие</strong>
+              <p class="msg-time">Можно принять доступ сразу из этого окна.</p>
+            </div>
+          </div>
+          ${list ? `<div class="stack">${list}</div>` : `<div class="settings-empty"><strong>Пусто</strong><p class='msg-time'>Пока нет новых приглашений</p></div>`}
+        </section>
+      </div>
+    `,
     async () => {}
   );
 
@@ -2765,21 +2940,41 @@ function openSearchMessagesSheet() {
     "Поиск по сообщениям",
     "",
     `
-      <label>
-        <span>Запрос</span>
-        <input name="q" minlength="2" maxlength="120" required />
-      </label>
-      <label>
-        <span>Где искать</span>
-        <select name="where">
-          <option value="current">Текущий чат</option>
-          <option value="all">Все чаты</option>
-          <option value="dm">Все личные</option>
-          <option value="room">Все комнаты</option>
-        </select>
-      </label>
-      <button id="searchRunBtn" class="primary" type="button">Искать</button>
-      <div id="searchResults" class="menu-contacts" style="max-height:280px"></div>
+      <div class="stack settings-layout">
+        <section class="settings-hero">
+          <div>
+            <strong>Поиск по сообщениям</strong>
+            <p class="msg-time">Ищите по текущему чату, всем диалогам или всем комнатам.</p>
+          </div>
+        </section>
+        <section class="settings-card">
+          <label>
+            <span>Запрос</span>
+            <input name="q" minlength="2" maxlength="120" required placeholder="Например: фото, договор, ссылка" />
+          </label>
+          <label>
+            <span>Где искать</span>
+            <select name="where">
+              <option value="current">Текущий чат</option>
+              <option value="all">Все чаты</option>
+              <option value="dm">Все личные</option>
+              <option value="room">Все комнаты</option>
+            </select>
+          </label>
+          <div class="settings-actions-row">
+            <button id="searchRunBtn" class="primary" type="button">Искать</button>
+          </div>
+        </section>
+        <section class="settings-card">
+          <div class="settings-card-head">
+            <div>
+              <strong>Результаты</strong>
+              <p class="msg-time">Клик откроет нужный чат и переведет к сообщению.</p>
+            </div>
+          </div>
+          <div id="searchResults" class="menu-contacts search-results-list"></div>
+        </section>
+      </div>
     `,
     async () => {}
   );
@@ -2788,9 +2983,24 @@ function openSearchMessagesSheet() {
     try {
       const qInput = els.sheetBody.querySelector("input[name='q']");
       const whereSelect = els.sheetBody.querySelector("select[name='where']");
+      const runBtn = els.sheetBody.querySelector("#searchRunBtn");
+      const box = document.getElementById("searchResults");
       const q = String(qInput?.value || "").trim();
       if (q.length < 2) {
         throw new Error("Минимум 2 символа");
+      }
+
+      if (runBtn) {
+        runBtn.disabled = true;
+        runBtn.textContent = "Ищу...";
+      }
+      if (box) {
+        box.innerHTML = `
+          <div class="stack">
+            <div class="settings-card skeleton-card"><div class="skeleton-line lg"></div><div class="skeleton-line"></div><div class="skeleton-line short"></div></div>
+            <div class="settings-card skeleton-card"><div class="skeleton-line lg"></div><div class="skeleton-line"></div><div class="skeleton-line short"></div></div>
+          </div>
+        `;
       }
 
       const where = String(whereSelect?.value || "current");
@@ -2814,11 +3024,10 @@ function openSearchMessagesSheet() {
       const list = (data.results || [])
         .map(
           (item) =>
-            `<button type="button" class="menu-contact-item" data-jump-msg="${item.id}" data-jump-scope="${item.scope || selectedScope}" data-jump-target-id="${item.targetId || selectedTargetId}"><div><strong>${item.scope === "room" ? "#" : "@"} ${escapeHtml(item.targetName || "Текущий чат")}</strong><p class="msg-time">#${item.id} · ${formatTime(item.createdAt)}</p><p class="msg-time">${escapeHtml((item.content || "").slice(0, 120) || "[пусто]")}</p></div></button>`
+            `<button type="button" class="menu-contact-item settings-contact-card" data-jump-msg="${item.id}" data-jump-scope="${item.scope || selectedScope}" data-jump-target-id="${item.targetId || selectedTargetId}"><div><strong>${item.scope === "room" ? "#" : "@"} ${escapeHtml(item.targetName || "Текущий чат")}</strong><p class="msg-time">#${item.id} · ${formatTime(item.createdAt)}</p><p class="msg-time">${escapeHtml((item.content || "").slice(0, 120) || "[пусто]")}</p></div><span class="menu-badge">→</span></button>`
         )
-        .join("") || "<p class='msg-time'>Ничего не найдено</p>";
+        .join("") || `<div class="settings-empty"><strong>Ничего не найдено</strong><p class='msg-time'>Попробуйте изменить запрос или область поиска</p></div>`;
 
-      const box = document.getElementById("searchResults");
       if (box) {
         box.innerHTML = list;
       }
@@ -2843,6 +3052,12 @@ function openSearchMessagesSheet() {
       });
     } catch (error) {
       alert(error.message || "Ошибка поиска");
+    } finally {
+      const runBtn = els.sheetBody.querySelector("#searchRunBtn");
+      if (runBtn) {
+        runBtn.disabled = false;
+        runBtn.textContent = "Искать";
+      }
     }
   };
 
@@ -2875,12 +3090,16 @@ async function sendTextMessage(content) {
       body: JSON.stringify(payload),
     });
     upsertDmMessage(response.message);
+    await loadDmMessages(state.selected.id);
+    renderMessages({ forceBottom: true });
   } else {
     const response = await api(`/api/rooms/${state.selected.id}/messages`, {
       method: "POST",
       body: JSON.stringify(payload),
     });
     upsertRoomMessage(response.message);
+    await loadRoomMessages(state.selected.id);
+    renderMessages({ forceBottom: true });
   }
   clearReply();
 }
@@ -2903,12 +3122,16 @@ async function sendImageMessage(file) {
       body: JSON.stringify(payload),
     });
     upsertDmMessage(response.message);
+    await loadDmMessages(state.selected.id);
+    renderMessages({ forceBottom: true });
   } else {
     const response = await api(`/api/rooms/${state.selected.id}/messages`, {
       method: "POST",
       body: JSON.stringify(payload),
     });
     upsertRoomMessage(response.message);
+    await loadRoomMessages(state.selected.id);
+    renderMessages({ forceBottom: true });
   }
 
   els.messageInput.value = "";
@@ -2929,32 +3152,67 @@ async function openProfileModal() {
     "Профиль",
     "Сохранить",
     `
-      <div class="segmented compact">
-        <button class="seg-btn ${state.listMode === "dm" ? "active" : ""}" type="button" data-switch-list="dm">Чаты</button>
-        <button class="seg-btn ${state.listMode === "room" ? "active" : ""}" type="button" data-switch-list="room">Комнаты</button>
-      </div>
-      <label>
-        <span>Имя</span>
-        <input name="displayName" maxlength="40" value="${escapeHtml(state.me?.displayName || "")}" />
-      </label>
-      <label>
-        <span>Аватарка</span>
-        <input name="avatar" type="file" accept="image/*" />
-      </label>
-      <div class="admin-box">
-        <h4>Смена пароля</h4>
-        <label>
-          <span>Текущий пароль</span>
-          <input name="currentPassword" type="password" minlength="6" autocomplete="current-password" />
-        </label>
-        <label>
-          <span>Новый пароль</span>
-          <input name="newPassword" type="password" minlength="6" autocomplete="new-password" />
-        </label>
-        <label>
-          <span>Повтори новый пароль</span>
-          <input name="confirmPassword" type="password" minlength="6" autocomplete="new-password" />
-        </label>
+      <div class="stack settings-layout">
+        <section class="settings-hero profile-hero">
+          <div class="profile-hero-main">
+            <div class="avatar profile-hero-avatar">${avatarMarkup(state.me)}</div>
+            <div>
+              <strong>${escapeHtml(state.me?.displayName || "Пользователь")}</strong>
+              <p class="msg-time">@${escapeHtml(state.me?.username || "username")}${state.me?.isAdmin ? " · admin" : ""}</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="settings-card">
+          <div class="settings-card-head">
+            <div>
+              <strong>Быстрое поведение</strong>
+              <p class="msg-time">Что открывать в профиле по умолчанию.</p>
+            </div>
+          </div>
+          <div class="segmented compact profile-mode-switcher">
+            <button class="seg-btn ${state.listMode === "dm" ? "active" : ""}" type="button" data-switch-list="dm">Чаты</button>
+            <button class="seg-btn ${state.listMode === "room" ? "active" : ""}" type="button" data-switch-list="room">Комнаты</button>
+          </div>
+        </section>
+
+        <section class="settings-card">
+          <div class="settings-card-head">
+            <div>
+              <strong>Данные профиля</strong>
+              <p class="msg-time">Имя и аватар видны другим пользователям.</p>
+            </div>
+          </div>
+          <label>
+            <span>Имя</span>
+            <input name="displayName" maxlength="40" value="${escapeHtml(state.me?.displayName || "")}" />
+          </label>
+          <label>
+            <span>Аватарка</span>
+            <input name="avatar" type="file" accept="image/*" />
+          </label>
+        </section>
+
+        <section class="settings-card">
+          <div class="settings-card-head">
+            <div>
+              <strong>Смена пароля</strong>
+              <p class="msg-time">Для безопасности аккаунта используйте новый уникальный пароль.</p>
+            </div>
+          </div>
+          <label>
+            <span>Текущий пароль</span>
+            <input name="currentPassword" type="password" minlength="6" autocomplete="current-password" />
+          </label>
+          <label>
+            <span>Новый пароль</span>
+            <input name="newPassword" type="password" minlength="6" autocomplete="new-password" />
+          </label>
+          <label>
+            <span>Повтори новый пароль</span>
+            <input name="confirmPassword" type="password" minlength="6" autocomplete="new-password" />
+          </label>
+        </section>
       </div>
     `,
     async (formData) => {
@@ -3013,17 +3271,45 @@ async function openProfileModal() {
 }
 
 async function openAdminConsoleModal() {
+  renderSheetLoading("Admin Console", 6);
   const adminData = await fetchAdminData();
   if (!adminData) {
     throw new Error("Доступ только для админа");
   }
 
-  openSheet(
-    "Admin Console",
-    "",
-    `
-      <div class="admin-box">
-        <div class="stack">
+  els.sheetTitle.textContent = "Admin Console";
+  els.sheetSubmit.classList.add("hidden");
+  els.sheetBody.innerHTML = `
+      <div class="stack admin-console-layout">
+        <section class="settings-hero">
+          <div>
+            <strong>Admin Console</strong>
+            <p class="msg-time">Управляйте пользователями, ролями и доступом из одного центра.</p>
+          </div>
+        </section>
+        <div class="settings-card">
+          <div class="segmented compact admin-tabs">
+            <button class="seg-btn active" data-admin-tab="create" type="button">Создать</button>
+            <button class="seg-btn" data-admin-tab="users" type="button">Пользователи</button>
+          </div>
+        </div>
+        <div class="settings-card admin-panel" data-admin-panel="create">
+          <div class="settings-card-head">
+            <div>
+              <strong>Новый пользователь</strong>
+              <p class="msg-time">Создание аккаунта и назначение роли в системе.</p>
+            </div>
+          </div>
+          <div class="stack compact-stack">
+            <div class="admin-stats compact-grid admin-kpi-grid">
+              <div class="settings-pill">Users: ${adminData.overview.stats.users}</div>
+              <div class="settings-pill">Rooms: ${adminData.overview.stats.rooms}</div>
+              <div class="settings-pill">DM: ${adminData.overview.stats.dmMessages}</div>
+              <div class="settings-pill">Room Msg: ${adminData.overview.stats.roomMessages}</div>
+              <div class="settings-pill">Polls: ${adminData.overview.stats.polls}</div>
+            </div>
+          </div>
+          <div class="stack compact-stack">
           <label>
             <span>Новый логин</span>
             <input id="adminCreateUsername" type="text" minlength="3" maxlength="24" placeholder="username" />
@@ -3043,23 +3329,27 @@ async function openAdminConsoleModal() {
               <option value="admin">Админ</option>
             </select>
           </label>
-          <button class="ghost" type="button" id="adminCreateUserBtn">Создать пользователя</button>
+          <button class="primary" type="button" id="adminCreateUserBtn">Создать пользователя</button>
         </div>
-        <div class="admin-stats">
-          <div>Users: ${adminData.overview.stats.users}</div>
-          <div>Rooms: ${adminData.overview.stats.rooms}</div>
-          <div>DM: ${adminData.overview.stats.dmMessages}</div>
-          <div>Room Msg: ${adminData.overview.stats.roomMessages}</div>
-          <div>Polls: ${adminData.overview.stats.polls}</div>
         </div>
+        <div class="settings-card admin-panel hidden" data-admin-panel="users">
+          <div class="settings-card-head">
+            <div>
+              <strong>Пользователи</strong>
+              <p class="msg-time">Выдача прав, смена пароля и удаление учетных записей.</p>
+            </div>
+          </div>
         <div class="admin-users">
           ${adminData.users.users
             .map(
               (user) => `
             <div class="admin-user">
-              <div>
-                <strong>${escapeHtml(user.displayName)}</strong>
-                <p class="msg-time">@${escapeHtml(user.username)}</p>
+              <div class="admin-user-main">
+                <div class="avatar">${avatarMarkup(user)}</div>
+                <div>
+                  <strong>${escapeHtml(user.displayName)}</strong>
+                  <p class="msg-time">@${escapeHtml(user.username)}${user.isAdmin ? " · admin" : ""}</p>
+                </div>
               </div>
               <div class="admin-user-actions">
                 <button class="ghost" type="button" data-admin-user-id="${user.id}" data-admin-next="${user.isAdmin ? "0" : "1"}">
@@ -3068,6 +3358,7 @@ async function openAdminConsoleModal() {
                 <button class="ghost" type="button" data-admin-pass-user-id="${user.id}" data-admin-pass-user-name="${escapeHtml(user.displayName)}">
                   Пароль
                 </button>
+                ${user.id !== state.me?.id ? `<button class="ghost danger" type="button" data-admin-delete-user-id="${user.id}" data-admin-delete-user-name="${escapeHtml(user.displayName)}">Удалить</button>` : ""}
               </div>
             </div>
           `
@@ -3075,9 +3366,19 @@ async function openAdminConsoleModal() {
             .join("")}
         </div>
       </div>
-    `,
-    async () => {}
-  );
+    `;
+
+  els.sheetBody.querySelectorAll("[data-admin-tab]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const tab = button.dataset.adminTab;
+      els.sheetBody.querySelectorAll("[data-admin-tab]").forEach((item) => {
+        item.classList.toggle("active", item.dataset.adminTab === tab);
+      });
+      els.sheetBody.querySelectorAll("[data-admin-panel]").forEach((panel) => {
+        panel.classList.toggle("hidden", panel.dataset.adminPanel !== tab);
+      });
+    });
+  });
 
   els.sheetBody.querySelectorAll("[data-admin-user-id]").forEach((button) => {
     button.addEventListener("click", async () => {
@@ -3092,10 +3393,43 @@ async function openAdminConsoleModal() {
         renderMe();
         renderEntityList();
         closeSheet();
+        showToast(isAdmin ? "Права администратора выданы" : "Права администратора сняты", "success");
         openAdminConsoleModal();
       } catch (error) {
         alert(error.message);
       }
+    });
+  });
+
+  els.sheetBody.querySelectorAll("[data-admin-delete-user-id]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const userId = Number(button.dataset.adminDeleteUserId);
+      const userName = String(button.dataset.adminDeleteUserName || "");
+      openSheet(
+        `Удалить · ${userName}`,
+        "Удалить",
+        `<div class="stack"><p>Удалить пользователя <strong>${escapeHtml(userName)}</strong>?</p><p class="msg-time">Будут удалены его сессии, сообщения и созданные им комнаты.</p></div>`,
+        async () => {
+          await api(`/api/admin/users/${userId}`, { method: "DELETE" });
+          await Promise.all([loadMe(), loadUsers(), loadRooms(), loadInvitations()]);
+          if (state.selected?.type === "dm" && state.selected.id === userId) {
+            state.selected = state.users.length ? { type: "dm", id: state.users[0].id } : null;
+          }
+          if (state.selected?.type === "room" && !state.rooms.some((room) => room.id === state.selected.id)) {
+            state.selected = state.users.length ? { type: "dm", id: state.users[0].id } : null;
+          }
+          if (state.selected?.type === "dm") {
+            await loadDmMessages(state.selected.id);
+          }
+          renderMe();
+          renderEntityList();
+          updateChatHeader();
+          renderMessages({ forceBottom: true });
+          closeSheet();
+          showToast("Пользователь удален", "success");
+          await openAdminConsoleModal();
+        }
+      );
     });
   });
 
@@ -3133,6 +3467,7 @@ async function openAdminConsoleModal() {
             method: "PATCH",
             body: JSON.stringify({ newPassword }),
           });
+          showToast("Пароль пользователя обновлен", "success");
         }
       );
     });
@@ -3159,6 +3494,7 @@ async function openAdminConsoleModal() {
         renderMe();
         renderEntityList();
         closeSheet();
+        showToast("Пользователь создан", "success");
         openAdminConsoleModal();
       } catch (error) {
         alert(error.message);
@@ -3168,6 +3504,7 @@ async function openAdminConsoleModal() {
 }
 
 async function openSettingsModal() {
+  renderSheetLoading("Настройки", 5);
   const sessionsData = await api("/api/auth/sessions").catch(() => ({ sessions: [] }));
   const sessions = sessionsData.sessions || [];
 
@@ -3191,53 +3528,86 @@ async function openSettingsModal() {
         : "Разрешение еще не выдано";
 
   const sessionsHtml = sessions.length
-    ? `<div class="menu-contacts">${sessions
+    ? `<div class="settings-device-list">${sessions
         .map(
           (session) => `
-          <div class="menu-contact-item with-action">
-            <div>
-              <strong>${session.isCurrent ? "Текущее устройство" : "Устройство"}</strong>
-              <p class="msg-time">${escapeHtml((session.userAgent || "").slice(0, 80) || "Unknown client")}</p>
-              <p class="msg-time">IP: ${escapeHtml(session.ip || "-")} · Активность: ${escapeHtml(formatDateTime(session.lastSeenAt) || "-")}</p>
+          <div class="settings-device-card ${session.isCurrent ? "current" : ""}">
+            <div class="settings-device-main">
+              <div>
+                <strong>${session.isCurrent ? "Это устройство" : "Подключенное устройство"}</strong>
+                <p class="msg-time">${escapeHtml((session.userAgent || "").slice(0, 90) || "Unknown client")}</p>
+              </div>
+              ${session.isCurrent ? `<span class="role-chip admin">online</span>` : ""}
             </div>
+            <p class="msg-time">IP: ${escapeHtml(session.ip || "-")}</p>
+            <p class="msg-time">Активность: ${escapeHtml(formatDateTime(session.lastSeenAt) || "-")}</p>
             ${session.isCurrent ? "" : `<button class="ghost danger compact-btn" type="button" data-session-revoke="${session.id}">Завершить</button>`}
           </div>
         `
         )
         .join("")}</div>`
-    : "<p class='msg-time'>Нет данных по устройствам</p>";
+    : `<div class="settings-empty"><strong>Пусто</strong><p class="msg-time">Нет данных по устройствам</p></div>`;
 
-  openSheet(
-    "Настройки",
-    "",
-    `
-      <div class="stack">
-        <div>
-          <p class="msg-time" style="margin-bottom: 6px;">Тема</p>
-          <div class="segmented compact">
+  const notificationCardClass = notificationsDenied || notificationsUnsupported
+    ? "settings-card warning"
+    : notificationsGranted
+      ? "settings-card success"
+      : "settings-card";
+
+  els.sheetTitle.textContent = "Настройки";
+  els.sheetSubmit.classList.add("hidden");
+  els.sheetBody.innerHTML = `
+      <div class="stack settings-layout">
+        <section class="settings-hero">
+          <div>
+            <strong>Pulse Settings</strong>
+            <p class="msg-time">Персонализируйте внешний вид, уведомления и контроль доступа к аккаунту.</p>
+          </div>
+        </section>
+        <section class="settings-card">
+          <div class="settings-card-head">
+            <div>
+              <strong>Тема интерфейса</strong>
+              <p class="msg-time">Светлая и темная палитра переключаются мгновенно.</p>
+            </div>
+          </div>
+          <div class="segmented compact settings-theme-switcher">
             <button class="seg-btn ${state.theme === "light" ? "active" : ""}" data-theme-btn="light" type="button">Светлая</button>
             <button class="seg-btn ${state.theme === "dark" ? "active" : ""}" data-theme-btn="dark" type="button">Темная</button>
           </div>
-        </div>
-        <div class="settings-list">
-          <label>
-            <input id="notificationsEnabledToggle" type="checkbox" ${state.notificationsEnabled ? "checked" : ""} ${notificationsDenied || notificationsUnsupported ? "disabled" : ""} />
-            Уведомления
-          </label>
-          <p class="msg-time" id="notificationsStatus">${statusText}</p>
-          <button id="notificationsPermissionBtn" class="ghost ${notificationsGranted || notificationsUnsupported ? "hidden" : ""}" type="button">Разрешить уведомления</button>
-          <button id="notificationsHelpBtn" class="ghost ${notificationsDenied ? "" : "hidden"}" type="button">Как включить в браузере</button>
-          <label><input type="checkbox" checked disabled /> Звуки (скоро)</label>
-          <label><input type="checkbox" checked disabled /> Компактный режим (скоро)</label>
-        </div>
-        <div class="admin-box">
-          <h4>Устройства и сессии</h4>
+        </section>
+        <section class="${notificationCardClass}">
+          <div class="settings-card-head">
+            <div>
+              <strong>Уведомления</strong>
+              <p class="msg-time">Управление доступом браузера и локальными оповещениями.</p>
+            </div>
+            <label class="settings-toggle ${notificationsDenied || notificationsUnsupported ? "disabled" : ""}">
+              <input id="notificationsEnabledToggle" type="checkbox" ${state.notificationsEnabled ? "checked" : ""} ${notificationsDenied || notificationsUnsupported ? "disabled" : ""} />
+              <span></span>
+            </label>
+          </div>
+          <p class="settings-status" id="notificationsStatus">${statusText}</p>
+          <div class="settings-actions-row">
+            <button id="notificationsPermissionBtn" class="ghost ${notificationsGranted || notificationsUnsupported ? "hidden" : ""}" type="button">Разрешить уведомления</button>
+            <button id="notificationsHelpBtn" class="ghost ${notificationsDenied ? "" : "hidden"}" type="button">Как включить</button>
+          </div>
+          <div class="settings-meta-grid">
+            <div class="settings-pill disabled">Звуки скоро</div>
+            <div class="settings-pill disabled">Компактный режим скоро</div>
+          </div>
+        </section>
+        <section class="settings-card">
+          <div class="settings-card-head">
+            <div>
+              <strong>Устройства и сессии</strong>
+              <p class="msg-time">Список устройств, где есть доступ к аккаунту.</p>
+            </div>
+          </div>
           ${sessionsHtml}
-        </div>
+        </section>
       </div>
-    `,
-    async () => {}
-  );
+    `;
 
   els.sheetBody.querySelectorAll("[data-theme-btn]").forEach((button) => {
     button.addEventListener("click", () => {
@@ -3309,12 +3679,13 @@ function openContactsModal() {
   const contacts = state.users
     .map(
       (user) => `
-      <button class="menu-contact-item" type="button" data-open-dm="${user.id}">
+      <button class="menu-contact-item settings-contact-card" type="button" data-open-dm="${user.id}">
         <div class="avatar">${avatarMarkup(user)}</div>
         <div>
           <strong>${escapeHtml(user.displayName)}</strong>
-          <p class="msg-time">@${escapeHtml(user.username)}</p>
+          <p class="msg-time">@${escapeHtml(user.username)}${user.online ? " · online" : ""}</p>
         </div>
+        ${user.unreadCount ? `<span class="menu-badge">${user.unreadCount > 99 ? "99+" : user.unreadCount}</span>` : ""}
       </button>
     `
     )
@@ -3323,7 +3694,25 @@ function openContactsModal() {
   openSheet(
     "Контакты",
     "",
-    `<div class="menu-contacts">${contacts || "<p class='msg-time'>Контактов нет</p>"}</div>`,
+    `
+      <div class="stack settings-layout">
+        <section class="settings-hero">
+          <div>
+            <strong>Контакты</strong>
+            <p class="msg-time">Откройте личный диалог одним нажатием.</p>
+          </div>
+        </section>
+        <section class="settings-card">
+          <div class="settings-card-head">
+            <div>
+              <strong>Все пользователи</strong>
+              <p class="msg-time">Выберите человека, чтобы сразу перейти в диалог.</p>
+            </div>
+          </div>
+          <div class="menu-contacts contacts-modal-list">${contacts || "<div class='settings-empty'><strong>Пусто</strong><p class='msg-time'>Контактов нет</p></div>"}</div>
+        </section>
+      </div>
+    `,
     async () => {}
   );
 
@@ -3342,9 +3731,37 @@ function openAboutModal() {
     "О приложении",
     "",
     `
-      <div class="stack">
-        <p class="msg-time">Pulse Messenger v1.0</p>
-        <p class="msg-time">Realtime чат с комнатами, опросами, изображениями и реакциями.</p>
+      <div class="stack settings-layout">
+        <section class="settings-hero">
+          <div>
+            <strong>Pulse Messenger</strong>
+            <p class="msg-time">v1.0 · realtime чат для личного круга, комнат и приватного общения.</p>
+          </div>
+        </section>
+        <section class="settings-card">
+          <div class="settings-card-head">
+            <div>
+              <strong>Что уже умеет</strong>
+              <p class="msg-time">Базовая платформа общения с акцентом на живой realtime UX.</p>
+            </div>
+          </div>
+          <div class="settings-meta-grid about-grid">
+            <div class="settings-pill">Личные чаты</div>
+            <div class="settings-pill">Комнаты</div>
+            <div class="settings-pill">Приглашения</div>
+            <div class="settings-pill">Реакции</div>
+            <div class="settings-pill">Опросы</div>
+            <div class="settings-pill">Изображения</div>
+          </div>
+        </section>
+        <section class="settings-card">
+          <div class="settings-card-head">
+            <div>
+              <strong>О проекте</strong>
+              <p class="msg-time">Собран на Node.js, Socket.IO и SQLite, подходит для VPS и Raspberry Pi.</p>
+            </div>
+          </div>
+        </section>
       </div>
     `,
     async () => {}
@@ -3373,9 +3790,9 @@ function connectSocket() {
     const activeDm = state.selected?.type === "dm" && state.selected.id === peerId;
     const incoming = message.senderId !== state.me?.id;
     touchDmPreviewFromMessage(message, { incrementUnread: incoming && !activeDm });
-    if (activeDm && message.senderId !== state.me?.id) {
+    if (activeDm) {
       await loadDmMessages(peerId);
-      scheduleRenderMessages();
+      renderMessages({ forceBottom: true });
     }
     if (incoming && (!activeDm || document.visibilityState !== "visible")) {
       const peer = state.users.find((u) => u.id === peerId);
@@ -3422,9 +3839,9 @@ function connectSocket() {
     const activeRoom = state.selected?.type === "room" && state.selected.id === message.roomId;
     const incoming = message.senderId !== state.me?.id;
     touchRoomPreviewFromMessage(message, { incrementUnread: incoming && !activeRoom });
-    if (activeRoom && message.senderId !== state.me?.id) {
+    if (activeRoom) {
       await loadRoomMessages(message.roomId);
-      scheduleRenderMessages();
+      renderMessages({ forceBottom: true });
     }
     if (incoming && (!activeRoom || document.visibilityState !== "visible")) {
       const room = state.rooms.find((r) => r.id === message.roomId);
@@ -3544,6 +3961,10 @@ async function startSession() {
   await Promise.all([loadMe(), loadUsers(), loadRooms(), loadInvitations()]);
   await registerServiceWorkerIfNeeded();
   syncPushSubscription().catch(() => {});
+  checkForAppUpdate().catch(() => {});
+  setInterval(() => {
+    checkForAppUpdate().catch(() => {});
+  }, 60000);
   showChat();
   renderMe();
   refreshInvitationsButton();
@@ -3681,6 +4102,10 @@ els.menuContactsBtn.addEventListener("click", () => {
   closeSideMenu();
   openContactsModal();
 });
+els.menuInvitesBtn?.addEventListener("click", () => {
+  closeSideMenu();
+  openInvitationsSheet();
+});
 els.menuAboutBtn.addEventListener("click", () => {
   closeSideMenu();
   openAboutModal();
@@ -3758,7 +4183,7 @@ els.chatActionsBtn.addEventListener("click", (event) => {
   event.preventDefault();
   event.stopPropagation();
   const rect = event.currentTarget.getBoundingClientRect();
-  showContextMenu(rect.right, rect.bottom + 6, buildChatHeaderContextItems());
+  showContextMenu(rect.right, rect.bottom + 6, buildChatHeaderContextItems(), { forceFloating: true });
 });
 
 els.authForm.addEventListener("submit", async (event) => {
@@ -3793,6 +4218,9 @@ els.logoutBtn.addEventListener("click", async () => {
 });
 
 els.composeMetaCancel.addEventListener("click", () => clearReply());
+els.reloadAppBtn?.addEventListener("click", () => {
+  window.location.reload();
+});
 
 els.composeMetaText.addEventListener("click", async () => {
   const id = Number(els.composeMetaText.dataset.replyMsgId || 0);

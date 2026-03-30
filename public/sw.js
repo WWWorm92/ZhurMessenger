@@ -1,4 +1,4 @@
-const SW_VERSION = "pulse-sw-v1";
+const SW_VERSION = "pulse-sw-v2";
 const APP_SHELL = [
   "/",
   "/index.html",
@@ -44,20 +44,22 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  event.respondWith(
-    caches.match(req).then((cached) => {
+  event.respondWith((async () => {
+    try {
+      const response = await fetch(req);
+      if (response.status === 200 && req.url.startsWith(self.location.origin)) {
+        const clone = response.clone();
+        caches.open(SW_VERSION).then((cache) => cache.put(req, clone));
+      }
+      return response;
+    } catch (error) {
+      const cached = await caches.match(req);
       if (cached) {
         return cached;
       }
-      return fetch(req).then((response) => {
-        if (response.status === 200 && req.url.startsWith(self.location.origin)) {
-          const clone = response.clone();
-          caches.open(SW_VERSION).then((cache) => cache.put(req, clone));
-        }
-        return response;
-      });
-    })
-  );
+      throw error;
+    }
+  })());
 });
 
 self.addEventListener("push", (event) => {

@@ -32,6 +32,29 @@ sudo DOMAIN=chat.example.com APP_DIR=/opt/ZhurMessenger bash scripts/install-any
 - скопировать `uploads/`
 - при наличии домена включить HTTPS через certbot
 
+## Автоматические обновления с GitHub
+
+Если хочешь, чтобы сервер сам подтягивал новые версии из GitHub, используй готовый таймер:
+
+```bash
+sudo bash scripts/install-auto-update.sh
+```
+
+После установки:
+
+- каждые 2 минуты идет проверка `origin/main`
+- если в GitHub есть новый коммит:
+  - делается `git pull --ff-only`
+  - ставятся зависимости
+  - перезапускается сервис `zhur-messenger`
+
+Проверка:
+
+```bash
+systemctl status zhur-messenger-update.timer
+journalctl -u zhur-messenger-update.service -f
+```
+
 ## 1. Что нужно перенести
 
 Обязательно переноси:
