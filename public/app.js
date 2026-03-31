@@ -244,6 +244,8 @@ function iconMarkup(name, extraClass = "") {
   return `<span class="ui-icon ${extraClass}" aria-hidden="true">${iconSvg(name)}</span>`;
 }
 
+
+
 function isPrivateRoom(room) {
   return room?.accessType === "private" || room?.accessType === "invite";
 }
@@ -527,6 +529,12 @@ async function uploadAvatar(file) {
   const form = new FormData();
   form.append("avatar", file);
   return api("/api/uploads/avatar", { method: "POST", body: form, isFormData: true });
+}
+
+async function uploadRoomAvatar(file) {
+  const form = new FormData();
+  form.append("avatar", file);
+  return api("/api/uploads/room-avatar", { method: "POST", body: form, isFormData: true });
 }
 
 function isNotificationsAvailable() {
@@ -1480,9 +1488,11 @@ function renderEntityList() {
     const li = document.createElement("li");
     li.className = "chat-item";
     li.classList.toggle("active", state.selected?.type === "room" && state.selected.id === room.id);
-    const icon = isPrivateRoom(room) ? iconMarkup("lock") : iconMarkup("room");
+    const icon = room.avatarUrl ? `<img src="${escapeHtml(room.avatarUrl)}" alt="${escapeHtml(room.name)}" />` : (isPrivateRoom(room) ? iconMarkup("lock") : iconMarkup("room"));
     const secondary = room.lastMessageAt
       ? `${room.lastMessageType === "image" ? `${iconMarkup("image", "inline-icon")}` : room.lastMessageType === "poll" ? `${iconMarkup("poll", "inline-icon")}` : ""}${escapeHtml((room.lastMessage || "").slice(0, 52) || "[медиа]")}`
+      : room.description
+        ? escapeHtml(room.description.slice(0, 60))
       : room.joined
         ? `Участников: ${room.membersCount}`
         : room.hasInvitation
@@ -1719,6 +1729,7 @@ function renderPoll(poll) {
     </div>
   `;
 }
+
 
 function renderMessages({ forceBottom = false } = {}) {
   const prevDistanceFromBottom =
@@ -2007,10 +2018,12 @@ function updateChatHeader() {
   }
   els.chatTitle.textContent = `# ${room.name}`;
   const roomBaseStatus = room.joined
-    ? `Участников: ${room.membersCount}`
+    ? `${room.description ? room.description.slice(0, 80) : `Участников: ${room.membersCount}`}`
     : "Нажми, чтобы войти";
   els.chatStatus.textContent = resolveTypingStatus(roomBaseStatus);
-  els.chatHeadAvatar.innerHTML = isPrivateRoom(room) ? iconMarkup("lock") : iconMarkup("room");
+  els.chatHeadAvatar.innerHTML = room.avatarUrl
+    ? `<img src="${escapeHtml(room.avatarUrl)}" alt="${escapeHtml(room.name)}" />`
+    : (isPrivateRoom(room) ? iconMarkup("lock") : iconMarkup("room"));
   const canPost = room.joined && room.canPost !== false;
   els.messageInput.disabled = !canPost;
   els.sendBtn.disabled = !canPost;
@@ -2159,6 +2172,19 @@ async function openRoomMembersSheet(roomId) {
           <input name="roomName" minlength="2" maxlength="40" value="${escapeHtml(roomName)}" />
         </label>
         <label>
+          <span>Описание</span>
+          <textarea name="roomDescription" maxlength="300" rows="3" placeholder="О чем эта комната">${escapeHtml(room.description || "")}</textarea>
+        </label>
+        <label>
+          <span>Ссылка комнаты</span>
+          <input name="roomSlug" minlength="3" maxlength="64" value="${escapeHtml(room.slug || "")}" placeholder="general-chat" />
+        </label>
+        <label>
+          <span>Аватар комнаты</span>
+          <input name="roomAvatar" type="file" accept="image/*" />
+        </label>
+        ${room.slug ? `<button type="button" class="settings-empty room-link-box" data-copy-room-link="${escapeHtml(`${location.origin}/room/${room.slug}`)}"><strong>Ссылка комнаты</strong><p class="msg-time">${escapeHtml(`${location.origin}/room/${room.slug}`)}</p></button>` : ""}
+        <label>
           <span>Доступ</span>
           <select name="roomAccessType">
             <option value="public" ${room.accessType === "public" ? "selected" : ""}>Публичная</option>
@@ -2207,7 +2233,7 @@ async function openRoomMembersSheet(roomId) {
     ? `<button type="button" class="ghost danger" data-room-leave="${roomId}">Покинуть комнату</button>`
     : "";
 
-  const fullBody = `<div class="stack settings-layout"><section class="settings-hero"><div><strong># ${escapeHtml(roomName)}</strong><p class="msg-time">Роль: ${escapeHtml(roomRoleLabel(myRole))} · ${room.accessType === "private" ? "закрытая" : "публичная"} комната</p></div></section>${body}${canManage ? `<section class="settings-card"><button type="button" class="ghost" data-room-audit="${roomId}">Журнал модерации</button></section>` : ""}${leaveButton ? `<section class="settings-card">${leaveButton}</section>` : ""}</div>`;
+  const fullBody = `<div class="stack settings-layout"><section class="settings-hero"><div class="profile-hero-main"><div class="avatar profile-hero-avatar">${room.avatarUrl ? `<img src="${escapeHtml(room.avatarUrl)}" alt="${escapeHtml(roomName)}" />` : (isPrivateRoom(room) ? iconMarkup("lock") : iconMarkup("room"))}</div><div><strong># ${escapeHtml(roomName)}</strong><p class="msg-time">Роль: ${escapeHtml(roomRoleLabel(myRole))} · ${room.accessType === "private" ? "закрытая" : "публичная"} комната</p>${room.description ? `<p class="msg-time">${escapeHtml(room.description)}</p>` : ""}</div></div></section>${body}${canManage ? `<section class="settings-card"><button type="button" class="ghost" data-room-audit="${roomId}">Журнал модерации</button></section>` : ""}${leaveButton ? `<section class="settings-card">${leaveButton}</section>` : ""}</div>`;
 
   const actions = canInvite
     ? [{ label: "Пригласить", onClick: () => { closeSheet(); openInviteUsersSheet(roomId); } }]
@@ -2218,6 +2244,8 @@ async function openRoomMembersSheet(roomId) {
       return;
     }
     const nextName = String(formData.get("roomName") || roomName).trim();
+    const nextDescription = String(formData.get("roomDescription") || room.description || "").trim();
+    const nextSlug = String(formData.get("roomSlug") || room.slug || "").trim();
     const nextAccessType = String(formData.get("roomAccessType") || room.accessType || "public");
     const nextWhoCanPost = String(formData.get("roomWhoCanPost") || room.whoCanPost || "members");
     const nextWhoCanInvite = String(formData.get("roomWhoCanInvite") || room.whoCanInvite || "admins");
@@ -2225,7 +2253,16 @@ async function openRoomMembersSheet(roomId) {
     const changedAccess = nextAccessType !== (room.accessType || "public");
     const changedPostPolicy = nextWhoCanPost !== (room.whoCanPost || "members");
     const changedInvitePolicy = nextWhoCanInvite !== (room.whoCanInvite || "admins");
-    if (!changedName && !changedAccess && !changedPostPolicy && !changedInvitePolicy) {
+    const changedDescription = nextDescription !== (room.description || "");
+    const changedSlug = nextSlug !== (room.slug || "");
+    let avatarUrl = room.avatarUrl || "";
+    const roomAvatarFile = formData.get("roomAvatar");
+    if (roomAvatarFile && roomAvatarFile.name) {
+      const uploaded = await uploadRoomAvatar(roomAvatarFile);
+      avatarUrl = uploaded.avatarUrl;
+    }
+    const changedAvatar = avatarUrl !== (room.avatarUrl || "");
+    if (!changedName && !changedAccess && !changedPostPolicy && !changedInvitePolicy && !changedDescription && !changedSlug && !changedAvatar) {
       return;
     }
 
@@ -2233,6 +2270,9 @@ async function openRoomMembersSheet(roomId) {
       method: "PATCH",
       body: JSON.stringify({
         name: nextName,
+        description: nextDescription,
+        slug: nextSlug,
+        avatarUrl,
         accessType: nextAccessType,
         whoCanPost: nextWhoCanPost,
         whoCanInvite: nextWhoCanInvite,
@@ -2246,6 +2286,17 @@ async function openRoomMembersSheet(roomId) {
 
   els.sheetBody.querySelector("[data-room-audit]")?.addEventListener("click", async () => {
     await openRoomAuditSheet(roomId);
+  });
+
+  els.sheetBody.querySelector("[data-copy-room-link]")?.addEventListener("click", async (event) => {
+    const value = String(event.currentTarget.dataset.copyRoomLink || "");
+    if (!value) return;
+    try {
+      await navigator.clipboard.writeText(value);
+      showToast("Ссылка комнаты скопирована", "success");
+    } catch {
+      showToast(value, "info");
+    }
   });
 
   els.sheetBody.querySelectorAll("[data-room-remove-member]").forEach((button) => {
@@ -2844,8 +2895,20 @@ function openCreateRoomSheet() {
     "Создать",
     `
       <label>
+        <span>Аватар комнаты</span>
+        <input name="avatar" type="file" accept="image/*" />
+      </label>
+      <label>
         <span>Название</span>
         <input name="name" minlength="2" maxlength="40" required />
+      </label>
+      <label>
+        <span>Описание</span>
+        <textarea name="description" rows="3" maxlength="300" placeholder="О чем будет эта комната"></textarea>
+      </label>
+      <label>
+        <span>Ссылка комнаты</span>
+        <input name="slug" minlength="3" maxlength="64" placeholder="general-chat" />
       </label>
       <label>
         <span>Доступ</span>
@@ -2857,13 +2920,21 @@ function openCreateRoomSheet() {
     `,
     async (formData) => {
       const name = String(formData.get("name") || "").trim();
+      const description = String(formData.get("description") || "").trim();
+      const slug = String(formData.get("slug") || "").trim();
       const accessType = String(formData.get("accessType") || "public");
       if (!name) {
         throw new Error("Укажи название");
       }
+      let avatarUrl = "";
+      const avatarFile = formData.get("avatar");
+      if (avatarFile && avatarFile.name) {
+        const uploaded = await uploadRoomAvatar(avatarFile);
+        avatarUrl = uploaded.avatarUrl;
+      }
       const response = await api("/api/rooms", {
         method: "POST",
-        body: JSON.stringify({ name, accessType }),
+        body: JSON.stringify({ name, description, slug, avatarUrl, accessType }),
       });
       await loadRooms();
       renderEntityList();
@@ -3661,6 +3732,7 @@ async function openSettingsModal() {
     );
   });
 
+
   els.sheetBody.querySelectorAll("[data-session-revoke]").forEach((button) => {
     button.addEventListener("click", async () => {
       const sessionId = button.dataset.sessionRevoke;
@@ -3766,6 +3838,45 @@ function openAboutModal() {
     `,
     async () => {}
   );
+}
+
+async function openSharedMediaSheet() {
+  if (!state.selected) return;
+  renderSheetLoading("Медиа и ссылки", 5);
+  const scope = state.selected.type === "room" ? "room" : "dm";
+  const targetId = state.selected.id;
+  const data = await api(`/api/media/shared?scope=${scope}&targetId=${targetId}&limit=80`);
+  const media = data.media || [];
+  const links = data.links || [];
+
+  const mediaHtml = media.length
+    ? `<div class="shared-grid">${media
+        .map((item) => item.type === "image"
+          ? `<button type="button" class="shared-media-card image" data-open-image="${escapeHtml(item.imageUrl)}"><img src="${escapeHtml(item.imageUrl)}" alt="image" /><span class="msg-time">${formatTime(item.createdAt)}</span></button>`
+          : ``)
+        .join("")}</div>`
+    : `<div class="settings-empty"><strong>Пусто</strong><p class="msg-time">Медиа еще не отправляли</p></div>`;
+
+  const linksHtml = links.length
+    ? `<div class="menu-contacts search-results-list">${links.map((item) => `<a class="menu-contact-item settings-contact-card" href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer"><div><strong>${escapeHtml(item.url)}</strong><p class="msg-time">Сообщение #${item.id} · ${formatTime(item.createdAt)}</p></div><span class="menu-badge">→</span></a>`).join("")}</div>`
+    : `<div class="settings-empty"><strong>Пусто</strong><p class="msg-time">Ссылок пока нет</p></div>`;
+
+  openSheet(
+    "Медиа и ссылки",
+    "",
+    `
+      <div class="stack settings-layout">
+        <section class="settings-hero"><div><strong>Shared media</strong><p class="msg-time">Все изображения и ссылки из выбранного чата.</p></div></section>
+        <section class="settings-card"><div class="settings-card-head"><div><strong>Медиа</strong><p class="msg-time">Картинки, отправленные в этом чате.</p></div></div>${mediaHtml}</section>
+        <section class="settings-card"><div class="settings-card-head"><div><strong>Ссылки</strong><p class="msg-time">Все URL, найденные в сообщениях.</p></div></div>${linksHtml}</section>
+      </div>
+    `,
+    async () => {}
+  );
+
+  els.sheetBody.querySelectorAll("[data-open-image]").forEach((button) => {
+    button.addEventListener("click", () => openImageViewer(button.dataset.openImage || ""));
+  });
 }
 
 function connectSocket() {
@@ -3969,6 +4080,20 @@ async function startSession() {
   renderMe();
   refreshInvitationsButton();
   refreshListFiltersUI();
+  const slugMatch = location.pathname.match(/^\/room\/([a-z0-9-]+)$/i);
+  if (slugMatch?.[1]) {
+    try {
+      const data = await api(`/api/room-slug/${encodeURIComponent(slugMatch[1])}`);
+      if (data.room?.id) {
+        await selectRoom(data.room.id);
+        history.replaceState({}, "", "/");
+        return;
+      }
+    } catch (error) {
+      showToast("Комната по ссылке не найдена или недоступна", "error");
+      history.replaceState({}, "", "/");
+    }
+  }
 
   if (!state.selected && state.users.length) {
     state.selected = { type: "dm", id: state.users[0].id };
@@ -4137,6 +4262,7 @@ function buildChatHeaderContextItems() {
     const room = state.rooms.find((item) => item.id === state.selected.id);
     if (room?.joined) {
       items.push({ label: "Поиск по сообщениям", onClick: async () => openSearchMessagesSheet() });
+      items.push({ label: "Медиа и ссылки", onClick: async () => openSharedMediaSheet() });
     }
     const canDeleteRoom = state.me?.isAdmin || room?.createdBy === state.me?.id || room?.canOwn;
     if (room?.joined && room?.canManage) {
@@ -4152,6 +4278,7 @@ function buildChatHeaderContextItems() {
     }
   } else {
     items.push({ label: "Поиск по сообщениям", onClick: async () => openSearchMessagesSheet() });
+    items.push({ label: "Медиа и ссылки", onClick: async () => openSharedMediaSheet() });
     items.push({ label: "Очистить диалог", danger: true, onClick: async () => clearDialogWithUser(state.selected.id) });
   }
 

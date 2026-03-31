@@ -1146,6 +1146,31 @@ button {
   background: rgba(249, 253, 255, 0.84);
 }
 
+.shared-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.shared-media-card {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.66);
+  overflow: hidden;
+  text-align: left;
+}
+
+.shared-media-card.image img {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  object-fit: cover;
+  display: block;
+}
+
+.shared-media-card.image .msg-time {
+  padding: 8px 10px;
+}
+
 .upload-progress {
   height: 4px;
   border-radius: 999px;
@@ -1166,7 +1191,7 @@ button {
 
 .composer-row {
   display: grid;
-  grid-template-columns: auto auto 1fr auto;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
   gap: 8px;
   align-items: center;
   padding: 0;
@@ -1205,6 +1230,7 @@ button {
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.82), rgba(237, 246, 253, 0.74));
   box-shadow: 0 10px 20px rgba(48, 96, 140, 0.12);
 }
+
 
 #sendBtn {
   min-width: 146px;
@@ -1643,6 +1669,11 @@ button {
   padding: 16px;
   text-align: center;
   background: rgba(255, 255, 255, 0.44);
+}
+
+.room-link-box {
+  text-align: left;
+  width: 100%;
 }
 
 .skeleton-card {
@@ -2208,6 +2239,11 @@ body[data-theme="dark"] .msg {
   border-color: rgba(95, 139, 177, 0.26);
 }
 
+body[data-theme="dark"] .shared-media-card {
+  background: rgba(29, 48, 65, 0.78);
+  border-color: rgba(103, 145, 181, 0.3);
+}
+
 body[data-theme="dark"] .msg-author {
   color: #a9c5de;
 }
@@ -2638,7 +2674,7 @@ body[data-theme="dark"] .presence {
   }
 
   .composer-row {
-    grid-template-columns: auto auto 1fr auto;
+    grid-template-columns: auto auto minmax(0, 1fr) auto;
     gap: 5px;
     padding: 0;
   }
@@ -2756,6 +2792,10 @@ body[data-theme="dark"] .presence {
   }
 
   .settings-meta-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .shared-grid {
     grid-template-columns: 1fr;
   }
 

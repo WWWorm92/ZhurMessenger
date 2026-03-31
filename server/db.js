@@ -114,6 +114,9 @@ async function initDb() {
 
   await ensureColumn("chat_rooms", "access_type", "TEXT NOT NULL DEFAULT 'public'");
   await ensureColumn("chat_rooms", "invite_code", "TEXT");
+  await ensureColumn("chat_rooms", "avatar_url", "TEXT DEFAULT ''");
+  await ensureColumn("chat_rooms", "description", "TEXT DEFAULT ''");
+  await ensureColumn("chat_rooms", "slug", "TEXT");
   await ensureColumn("chat_rooms", "who_can_post", "TEXT NOT NULL DEFAULT 'members'");
   await ensureColumn("chat_rooms", "who_can_invite", "TEXT NOT NULL DEFAULT 'admins'");
   await run("UPDATE chat_rooms SET who_can_post = 'members' WHERE who_can_post IS NULL OR who_can_post = ''");
@@ -127,6 +130,11 @@ async function initDb() {
   }
 
   await run("UPDATE chat_rooms SET access_type = 'private' WHERE access_type = 'invite'");
+  await run(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_rooms_slug
+    ON chat_rooms(slug)
+    WHERE slug IS NOT NULL AND slug != ''
+  `);
 
   await run(`
     CREATE TABLE IF NOT EXISTS room_members (

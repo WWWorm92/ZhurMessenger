@@ -25,9 +25,11 @@ const UPLOADS_ROOT = process.env.UPLOADS_DIR
   : path.join(__dirname, "..", "uploads");
 const AVATAR_DIR = path.join(UPLOADS_ROOT, "avatars");
 const MESSAGE_IMAGE_DIR = path.join(UPLOADS_ROOT, "messages");
+const ROOM_AVATAR_DIR = path.join(UPLOADS_ROOT, "rooms");
 
 fs.mkdirSync(AVATAR_DIR, { recursive: true });
 fs.mkdirSync(MESSAGE_IMAGE_DIR, { recursive: true });
+fs.mkdirSync(ROOM_AVATAR_DIR, { recursive: true });
 
 const app = express();
 let server;
@@ -54,7 +56,7 @@ app.use((req, res, next) => {
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("X-Frame-Options", "DENY");
   res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
-  res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=() ");
+  res.setHeader("Permissions-Policy", "camera=(), geolocation=()");
   next();
 });
 
@@ -319,6 +321,30 @@ function publicFilePath(kind, filename) {
   return `/uploads/${kind}/${filename}`;
 }
 
+function slugifyRoomName(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9а-яё]+/gi, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48);
+}
+
+async function makeUniqueRoomSlug(base, excludeRoomId = null) {
+  const seed = slugifyRoomName(base) || `room-${Date.now()}`;
+  let slug = seed;
+  let i = 1;
+  while (true) {
+    const existing = excludeRoomId
+      ? await get("SELECT id FROM chat_rooms WHERE slug = ? AND id != ?", [slug, excludeRoomId])
+      : await get("SELECT id FROM chat_rooms WHERE slug = ?", [slug]);
+    if (!existing) {
+      return slug;
+    }
+    i += 1;
+    slug = `${seed}-${i}`.slice(0, 56);
+  }
+}
+
 function clientIp(req) {
   const forwarded = String(req.headers["x-forwarded-for"] || "").split(",")[0].trim();
   return forwarded || req.ip || "";
@@ -445,6 +471,13 @@ const messageImageUpload = multer({
   fileFilter: imageFilter,
 });
 
+const roomAvatarUpload = multer({
+  storage: createImageUploadStorage(ROOM_AVATAR_DIR),
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: imageFilter,
+});
+
+
 async function joinUserToPublicRooms(userId) {
   const rooms = await all("SELECT id FROM chat_rooms WHERE access_type = 'public'");
   for (const room of rooms) {
@@ -463,7 +496,7 @@ async function getRoomMemberIds(roomId) {
 async function getRoomForUser(userId, roomId) {
   return get(
     `
-    SELECT r.id, r.name, r.access_type, r.created_by, r.created_at, r.who_can_post, r.who_can_invite, m.role AS my_role
+    SELECT r.id, r.name, r.access_type, r.created_by, r.created_at, r.avatar_url, r.description, r.slug, r.who_can_post, r.who_can_invite, m.role AS my_role
     FROM chat_rooms r
     JOIN room_members m ON m.room_id = r.id
     WHERE r.id = ? AND m.user_id = ?
@@ -603,6 +636,9 @@ function roomPayload(room, joined) {
     accessType: room.access_type,
     createdBy: room.created_by,
     createdAt: room.created_at,
+    avatarUrl: room.avatar_url || "",
+    description: room.description || "",
+    slug: room.slug || "",
     myRole: room.my_role || null,
     whoCanPost: room.who_can_post || "members",
     whoCanInvite: room.who_can_invite || "admins",
@@ -1201,6 +1237,25 @@ app.post(
       res.json({ user: sanitizeUser(user), avatarUrl: avatarPath });
     } catch (error) {
       res.status(500).json({ error: "Failed to upload avatar" });
+    }
+  }
+);
+
+app.post(
+  "/api/uploads/room-avatar",
+  authMiddleware,
+  roomAvatarUpload.single("avatar"),
+  async (req, res) => {
+    try {
+      if (!req.file) {
+        res.status(400).json({ error: "Avatar file is required" });
+        return;
+      }
+      res.status(201).json({
+        avatarUrl: publicFilePath("rooms", req.file.filename),
+      });
+    } catch (error) {
+      res.status(400).json({ error: error.message || "Upload failed" });
     }
   }
 );
@@ -1836,6 +1891,9 @@ app.get("/api/rooms", authMiddleware, async (req, res) => {
         r.access_type,
         r.created_by,
         r.created_at,
+        r.avatar_url,
+        r.description,
+        r.slug,
         (
           SELECT rm.content
           FROM room_messages rm
@@ -1929,6 +1987,9 @@ app.post("/api/rooms", authMiddleware, async (req, res) => {
     const requestedAccess = String(req.body.accessType || "").toLowerCase();
     const accessType =
       requestedAccess === "private" || requestedAccess === "invite" ? "private" : "public";
+    const description = normalizeText(req.body.description, 300);
+    const avatarUrl = normalizeText(req.body.avatarUrl, 500);
+    const requestedSlug = normalizeText(req.body.slug, 64).toLowerCase();
 
     if (name.length < 2 || name.length > 40) {
       res.status(400).json({ error: "Room name must be 2-40 chars" });
@@ -1941,9 +2002,25 @@ app.post("/api/rooms", authMiddleware, async (req, res) => {
       return;
     }
 
+    let slug = "";
+    if (requestedSlug) {
+      slug = slugifyRoomName(requestedSlug);
+      if (slug.length < 3) {
+        res.status(400).json({ error: "Room link must be at least 3 chars" });
+        return;
+      }
+      const slugExists = await get("SELECT id FROM chat_rooms WHERE slug = ?", [slug]);
+      if (slugExists) {
+        res.status(409).json({ error: "Room link already exists" });
+        return;
+      }
+    } else {
+      slug = await makeUniqueRoomSlug(name);
+    }
+
     const inserted = await run(
-      "INSERT INTO chat_rooms (name, access_type, created_by) VALUES (?, ?, ?)",
-      [name, accessType, req.user.id]
+      "INSERT INTO chat_rooms (name, access_type, created_by, avatar_url, description, slug) VALUES (?, ?, ?, ?, ?, ?)",
+      [name, accessType, req.user.id, avatarUrl || null, description || null, slug]
     );
 
     await run("INSERT OR IGNORE INTO room_members (room_id, user_id, role) VALUES (?, ?, 'owner')", [
@@ -2370,6 +2447,38 @@ app.get("/api/rooms/:roomId", authMiddleware, async (req, res) => {
   }
 });
 
+app.get("/api/room-slug/:slug", authMiddleware, async (req, res) => {
+  try {
+    const slug = slugifyRoomName(req.params.slug);
+    if (!slug) {
+      res.status(400).json({ error: "Invalid room slug" });
+      return;
+    }
+
+    const room = await get("SELECT * FROM chat_rooms WHERE slug = ?", [slug]);
+    if (!room) {
+      res.status(404).json({ error: "Room not found" });
+      return;
+    }
+
+    const joined = await get("SELECT role FROM room_members WHERE room_id = ? AND user_id = ?", [room.id, req.user.id]);
+    const me = await get("SELECT id, is_admin FROM users WHERE id = ?", [req.user.id]);
+    const myRole = joined?.role || null;
+    res.json({
+      room: {
+        ...roomPayload({ ...room, my_role: myRole }, Boolean(joined) || Boolean(me?.is_admin)),
+        joined: Boolean(joined),
+        canManage: canManageRoom(me, room, myRole),
+        canOwn: canOwnRoom(me, room, myRole),
+        canPost: canPostToRoom(me, room, myRole),
+        canInvite: canInviteToRoom(me, room, myRole),
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
 app.delete("/api/rooms/:roomId/members/:userId", authMiddleware, async (req, res) => {
   try {
     const roomId = mustBeValidId(req.params.roomId);
@@ -2484,6 +2593,29 @@ app.patch("/api/rooms/:roomId", authMiddleware, async (req, res) => {
       payload.name = name;
     }
 
+    if (req.body.description !== undefined) {
+      payload.description = normalizeText(req.body.description, 300);
+    }
+
+    if (req.body.avatarUrl !== undefined) {
+      payload.avatarUrl = normalizeText(req.body.avatarUrl, 500);
+    }
+
+    if (req.body.slug !== undefined) {
+      const requestedSlug = normalizeText(req.body.slug, 64).toLowerCase();
+      const slug = slugifyRoomName(requestedSlug);
+      if (slug.length < 3) {
+        res.status(400).json({ error: "Room link must be at least 3 chars" });
+        return;
+      }
+      const exists = await get("SELECT id FROM chat_rooms WHERE slug = ? AND id != ?", [slug, roomId]);
+      if (exists) {
+        res.status(409).json({ error: "Room link already exists" });
+        return;
+      }
+      payload.slug = slug;
+    }
+
     if (req.body.accessType !== undefined) {
       const requestedAccess = String(req.body.accessType || "").toLowerCase();
       payload.accessType = requestedAccess === "private" ? "private" : "public";
@@ -2507,18 +2639,21 @@ app.patch("/api/rooms/:roomId", authMiddleware, async (req, res) => {
       payload.whoCanInvite = policy;
     }
 
-    if (!payload.name && !payload.accessType && !payload.whoCanPost && !payload.whoCanInvite) {
+    if (!payload.name && !payload.accessType && !payload.whoCanPost && !payload.whoCanInvite && payload.description === undefined && payload.avatarUrl === undefined && !payload.slug) {
       res.status(400).json({ error: "No changes provided" });
       return;
     }
 
     await run(
-      "UPDATE chat_rooms SET name = COALESCE(?, name), access_type = COALESCE(?, access_type), who_can_post = COALESCE(?, who_can_post), who_can_invite = COALESCE(?, who_can_invite) WHERE id = ?",
+      "UPDATE chat_rooms SET name = COALESCE(?, name), access_type = COALESCE(?, access_type), who_can_post = COALESCE(?, who_can_post), who_can_invite = COALESCE(?, who_can_invite), description = COALESCE(?, description), avatar_url = COALESCE(?, avatar_url), slug = COALESCE(?, slug) WHERE id = ?",
       [
         payload.name || null,
         payload.accessType || null,
         payload.whoCanPost || null,
         payload.whoCanInvite || null,
+        payload.description !== undefined ? payload.description : null,
+        payload.avatarUrl !== undefined ? payload.avatarUrl : null,
+        payload.slug || null,
         roomId,
       ]
     );
@@ -3367,6 +3502,87 @@ app.get("/api/search/messages", authMiddleware, async (req, res) => {
       .slice(0, limit);
 
     res.json({ results: combined });
+  } catch (error) {
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+function extractLinks(text) {
+  const value = String(text || "");
+  const matches = value.match(/https?:\/\/[^\s]+/gi) || [];
+  return [...new Set(matches)].slice(0, 5);
+}
+
+app.get("/api/media/shared", authMiddleware, async (req, res) => {
+  try {
+    const scope = String(req.query.scope || "dm").toLowerCase();
+    const targetId = mustBeValidId(req.query.targetId);
+    const limit = parseLimit(req.query.limit, 60, 200);
+    if (!targetId || !["dm", "room"].includes(scope)) {
+      res.status(400).json({ error: "Invalid scope or target id" });
+      return;
+    }
+
+    if (scope === "dm") {
+      const rows = await all(
+        `
+        SELECT id, sender_id, receiver_id, content, message_type, image_url, created_at
+        FROM messages
+        WHERE ((sender_id = ? AND receiver_id = ?) OR (sender_id = ? AND receiver_id = ?))
+          AND deleted_at IS NULL
+        ORDER BY id DESC
+        LIMIT ?
+        `,
+        [req.user.id, targetId, targetId, req.user.id, limit * 4]
+      );
+      const media = rows.filter((row) => row.message_type === "image").slice(0, limit);
+      const links = rows
+        .flatMap((row) => extractLinks(row.content).map((url) => ({ id: row.id, createdAt: row.created_at, url, senderId: row.sender_id })))
+        .slice(0, limit);
+      res.json({
+        media: media.map((row) => ({
+          id: row.id,
+          type: row.message_type,
+          imageUrl: row.image_url || "",
+          createdAt: row.created_at,
+          senderId: row.sender_id,
+        })),
+        links,
+      });
+      return;
+    }
+
+    const room = await getRoomForUser(req.user.id, targetId);
+    if (!room) {
+      res.status(403).json({ error: "Join room first" });
+      return;
+    }
+
+    const rows = await all(
+      `
+      SELECT id, room_id, sender_id, content, message_type, image_url, created_at
+      FROM room_messages
+      WHERE room_id = ?
+        AND deleted_at IS NULL
+      ORDER BY id DESC
+      LIMIT ?
+      `,
+      [targetId, limit * 4]
+    );
+    const media = rows.filter((row) => row.message_type === "image").slice(0, limit);
+    const links = rows
+      .flatMap((row) => extractLinks(row.content).map((url) => ({ id: row.id, createdAt: row.created_at, url, senderId: row.sender_id })))
+      .slice(0, limit);
+    res.json({
+      media: media.map((row) => ({
+        id: row.id,
+        type: row.message_type,
+        imageUrl: row.image_url || "",
+        createdAt: row.created_at,
+        senderId: row.sender_id,
+      })),
+      links,
+    });
   } catch (error) {
     res.status(500).json({ error: "Internal server error" });
   }
