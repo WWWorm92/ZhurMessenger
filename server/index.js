@@ -7,6 +7,7 @@ const express = require("express");
 const cors = require("cors");
 const bcrypt = require("bcryptjs");
 const multer = require("multer");
+const webpush = require("web-push");
 const { Server } = require("socket.io");
 
 const { initDb, run, get, all } = require("./db");
@@ -17,6 +18,8 @@ const HOST = process.env.HOST || "127.0.0.1";
 const NODE_ENV = process.env.NODE_ENV || "development";
 const CORS_ORIGIN = process.env.CORS_ORIGIN || "";
 const WEB_PUSH_PUBLIC_KEY = String(process.env.WEB_PUSH_PUBLIC_KEY || "").trim();
+const WEB_PUSH_PRIVATE_KEY = String(process.env.WEB_PUSH_PRIVATE_KEY || "").trim();
+const WEB_PUSH_SUBJECT = String(process.env.WEB_PUSH_SUBJECT || "mailto:admin@example.com").trim();
 const REFRESH_TOKEN_TTL_DAYS = Number(process.env.REFRESH_TOKEN_TTL_DAYS || 30);
 const HTTPS_KEY_PATH = String(process.env.HTTPS_KEY_PATH || "").trim();
 const HTTPS_CERT_PATH = String(process.env.HTTPS_CERT_PATH || "").trim();
@@ -26,10 +29,13 @@ const UPLOADS_ROOT = process.env.UPLOADS_DIR
 const AVATAR_DIR = path.join(UPLOADS_ROOT, "avatars");
 const MESSAGE_IMAGE_DIR = path.join(UPLOADS_ROOT, "messages");
 const ROOM_AVATAR_DIR = path.join(UPLOADS_ROOT, "rooms");
+const MESSAGE_FILE_DIR = path.join(UPLOADS_ROOT, "files");
+const RESERVED_ROOM_SLUGS = new Set(["api", "uploads", "room", "health", "sw-js", "sw", "manifest", "manifest-webmanifest", "login", "auth"]);
 
 fs.mkdirSync(AVATAR_DIR, { recursive: true });
 fs.mkdirSync(MESSAGE_IMAGE_DIR, { recursive: true });
 fs.mkdirSync(ROOM_AVATAR_DIR, { recursive: true });
+fs.mkdirSync(MESSAGE_FILE_DIR, { recursive: true });
 
 const app = express();
 let server;
@@ -50,9 +56,29 @@ if (HTTPS_KEY_PATH && HTTPS_CERT_PATH && fs.existsSync(HTTPS_KEY_PATH) && fs.exi
 }
 const io = new Server(server);
 
+const WEB_PUSH_ENABLED = Boolean(WEB_PUSH_PUBLIC_KEY && WEB_PUSH_PRIVATE_KEY);
+if (WEB_PUSH_ENABLED) {
+  webpush.setVapidDetails(WEB_PUSH_SUBJECT, WEB_PUSH_PUBLIC_KEY, WEB_PUSH_PRIVATE_KEY);
+}
+
 const socketsByUser = new Map();
 
 app.use((req, res, next) => {
+  const csp = [
+    "default-src 'self'",
+    "base-uri 'self'",
+    "frame-ancestors 'none'",
+    "object-src 'none'",
+    "script-src 'self'",
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+    "font-src 'self' https://fonts.gstatic.com data:",
+    "img-src 'self' data: blob: https:",
+    "media-src 'self' blob:",
+    "connect-src 'self' ws: wss:",
+    "worker-src 'self' blob:",
+    "form-action 'self'",
+  ].join("; ");
+  res.setHeader("Content-Security-Policy", csp);
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("X-Frame-Options", "DENY");
   res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
@@ -60,10 +86,15 @@ app.use((req, res, next) => {
   next();
 });
 
+if (NODE_ENV === "production" && !CORS_ORIGIN) {
+  throw new Error("CORS_ORIGIN must be set in production");
+}
+
 if (CORS_ORIGIN) {
   const allowlist = CORS_ORIGIN.split(",").map((item) => item.trim()).filter(Boolean);
   app.use(
     cors({
+      credentials: true,
       origin(origin, callback) {
         if (!origin || allowlist.includes(origin)) {
           callback(null, true);
@@ -78,7 +109,21 @@ if (CORS_ORIGIN) {
 }
 
 app.use(express.json({ limit: "1mb" }));
-app.use("/uploads", express.static(UPLOADS_ROOT));
+app.use(
+  "/uploads/files",
+  express.static(MESSAGE_FILE_DIR, {
+    setHeaders(res, filePath) {
+      const basename = path.basename(filePath).toLowerCase();
+      res.setHeader("X-Content-Type-Options", "nosniff");
+      res.setHeader("Content-Disposition", `attachment; filename="${basename.replace(/"/g, "")}"`);
+    },
+  })
+);
+app.use("/uploads", express.static(UPLOADS_ROOT, {
+  setHeaders(res) {
+    res.setHeader("X-Content-Type-Options", "nosniff");
+  },
+}));
 app.use(express.static(path.join(__dirname, "..", "public")));
 
 function createRateLimiter({ windowMs, max, keyFn }) {
@@ -118,6 +163,24 @@ const authRateLimit = createRateLimiter({
   windowMs: 15 * 60 * 1000,
   max: 25,
   keyFn: (req) => `${req.ip}:${req.path}`,
+});
+
+const messageRateLimit = createRateLimiter({
+  windowMs: 60 * 1000,
+  max: 45,
+  keyFn: (req) => `${req.user?.id || req.ip}:msg`,
+});
+
+const uploadRateLimit = createRateLimiter({
+  windowMs: 10 * 60 * 1000,
+  max: 30,
+  keyFn: (req) => `${req.user?.id || req.ip}:upload`,
+});
+
+const searchRateLimit = createRateLimiter({
+  windowMs: 60 * 1000,
+  max: 40,
+  keyFn: (req) => `${req.user?.id || req.ip}:search`,
 });
 
 function sanitizeUser(user) {
@@ -329,11 +392,20 @@ function slugifyRoomName(value) {
     .slice(0, 48);
 }
 
+function isReservedRoomSlug(slug) {
+  return RESERVED_ROOM_SLUGS.has(String(slug || "").toLowerCase());
+}
+
 async function makeUniqueRoomSlug(base, excludeRoomId = null) {
   const seed = slugifyRoomName(base) || `room-${Date.now()}`;
   let slug = seed;
   let i = 1;
   while (true) {
+    if (isReservedRoomSlug(slug)) {
+      i += 1;
+      slug = `${seed}-${i}`.slice(0, 56);
+      continue;
+    }
     const existing = excludeRoomId
       ? await get("SELECT id FROM chat_rooms WHERE slug = ? AND id != ?", [slug, excludeRoomId])
       : await get("SELECT id FROM chat_rooms WHERE slug = ?", [slug]);
@@ -425,6 +497,40 @@ async function touchAuthSession(sessionId) {
   );
 }
 
+async function sendWebPushToUser(userId, payload) {
+  if (!WEB_PUSH_ENABLED || !userId) {
+    return;
+  }
+
+  const subscriptions = await all(
+    "SELECT id, endpoint, p256dh, auth FROM push_subscriptions WHERE user_id = ?",
+    [userId]
+  );
+  if (!subscriptions.length) {
+    return;
+  }
+
+  const body = JSON.stringify(payload);
+  for (const subscription of subscriptions) {
+    try {
+      await webpush.sendNotification(
+        {
+          endpoint: subscription.endpoint,
+          keys: {
+            p256dh: subscription.p256dh,
+            auth: subscription.auth,
+          },
+        },
+        body
+      );
+    } catch (error) {
+      if (error.statusCode === 404 || error.statusCode === 410) {
+        await run("DELETE FROM push_subscriptions WHERE id = ?", [subscription.id]);
+      }
+    }
+  }
+}
+
 function extensionFromMime(mimeType) {
   if (mimeType === "image/jpeg") {
     return ".jpg";
@@ -441,6 +547,13 @@ function extensionFromMime(mimeType) {
   return "";
 }
 
+const ALLOWED_IMAGE_MIME_TYPES = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/gif",
+]);
+
 function createImageUploadStorage(targetDir) {
   return multer.diskStorage({
     destination: (req, file, cb) => cb(null, targetDir),
@@ -452,8 +565,37 @@ function createImageUploadStorage(targetDir) {
 }
 
 function imageFilter(req, file, cb) {
-  if (!String(file.mimetype || "").startsWith("image/")) {
+  const mime = String(file.mimetype || "").toLowerCase();
+  if (!ALLOWED_IMAGE_MIME_TYPES.has(mime)) {
     cb(new Error("Only image files are allowed"));
+    return;
+  }
+  cb(null, true);
+}
+
+const ALLOWED_FILE_EXTENSIONS = new Set([".pdf", ".txt", ".doc", ".docx", ".xls", ".xlsx", ".csv", ".zip", ".7z", ".rar"]);
+const ALLOWED_FILE_MIME_PREFIXES = [
+  "application/pdf",
+  "text/plain",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument",
+  "application/vnd.ms-excel",
+  "text/csv",
+  "application/zip",
+  "application/x-7z-compressed",
+  "application/x-rar-compressed",
+  "application/octet-stream",
+];
+
+function messageFileFilter(req, file, cb) {
+  const ext = path.extname(String(file.originalname || "")).toLowerCase();
+  const mime = String(file.mimetype || "").toLowerCase();
+  if (!ALLOWED_FILE_EXTENSIONS.has(ext)) {
+    cb(new Error("File type is not allowed"));
+    return;
+  }
+  if (!ALLOWED_FILE_MIME_PREFIXES.some((allowed) => mime.startsWith(allowed))) {
+    cb(new Error("File mime type is not allowed"));
     return;
   }
   cb(null, true);
@@ -475,6 +617,15 @@ const roomAvatarUpload = multer({
   storage: createImageUploadStorage(ROOM_AVATAR_DIR),
   limits: { fileSize: 5 * 1024 * 1024 },
   fileFilter: imageFilter,
+});
+
+const messageFileUpload = multer({
+  storage: multer.diskStorage({
+    destination: (req, file, cb) => cb(null, MESSAGE_FILE_DIR),
+    filename: (req, file, cb) => cb(null, `${Date.now()}-${crypto.randomBytes(4).toString("hex")}-${file.originalname.replace(/[^a-zA-Z0-9._-]+/g, "-")}`),
+  }),
+  limits: { fileSize: 25 * 1024 * 1024 },
+  fileFilter: messageFileFilter,
 });
 
 
@@ -1222,6 +1373,7 @@ app.patch("/api/profile/password", authMiddleware, async (req, res) => {
 app.post(
   "/api/uploads/avatar",
   authMiddleware,
+  uploadRateLimit,
   (req, res, next) => avatarUpload.single("avatar")(req, res, next),
   async (req, res) => {
     try {
@@ -1244,6 +1396,7 @@ app.post(
 app.post(
   "/api/uploads/room-avatar",
   authMiddleware,
+  uploadRateLimit,
   roomAvatarUpload.single("avatar"),
   async (req, res) => {
     try {
@@ -1263,6 +1416,7 @@ app.post(
 app.post(
   "/api/uploads/message-image",
   authMiddleware,
+  uploadRateLimit,
   (req, res, next) => messageImageUpload.single("image")(req, res, next),
   async (req, res) => {
     if (!req.file) {
@@ -1272,6 +1426,28 @@ app.post(
 
     const imageUrl = publicFilePath("messages", req.file.filename);
     res.json({ imageUrl });
+  }
+);
+
+app.post(
+  "/api/uploads/message-file",
+  authMiddleware,
+  uploadRateLimit,
+  messageFileUpload.single("file"),
+  async (req, res) => {
+    try {
+      if (!req.file) {
+        res.status(400).json({ error: "File required" });
+        return;
+      }
+      res.status(201).json({
+        fileUrl: publicFilePath("files", req.file.filename),
+        fileName: req.file.originalname,
+        fileSize: req.file.size,
+      });
+    } catch (error) {
+      res.status(400).json({ error: error.message || "Upload failed" });
+    }
   }
 );
 
@@ -1287,6 +1463,11 @@ app.get("/api/users", authMiddleware, async (req, res) => {
         u.is_admin,
         u.created_at,
         (
+          SELECT MAX(us.last_seen_at)
+          FROM user_sessions us
+          WHERE us.user_id = u.id
+        ) AS last_seen_at,
+        (
           SELECT m.content
           FROM messages m
           WHERE ((m.sender_id = ? AND m.receiver_id = u.id) OR (m.sender_id = u.id AND m.receiver_id = ?))
@@ -1294,6 +1475,14 @@ app.get("/api/users", authMiddleware, async (req, res) => {
           ORDER BY m.id DESC
           LIMIT 1
         ) AS last_message,
+        (
+          SELECT m.file_name
+          FROM messages m
+          WHERE ((m.sender_id = ? AND m.receiver_id = u.id) OR (m.sender_id = u.id AND m.receiver_id = ?))
+            AND m.deleted_at IS NULL
+          ORDER BY m.id DESC
+          LIMIT 1
+        ) AS last_file_name,
         (
           SELECT m.message_type
           FROM messages m
@@ -1322,6 +1511,8 @@ app.get("/api/users", authMiddleware, async (req, res) => {
         req.user.id,
         req.user.id,
         req.user.id,
+        req.user.id,
+        req.user.id,
       ]
     );
 
@@ -1336,9 +1527,11 @@ app.get("/api/users", authMiddleware, async (req, res) => {
         avatarUrl: user.avatar_url || "",
         isAdmin: Boolean(user.is_admin),
         createdAt: user.created_at,
+        lastSeenAt: user.last_seen_at || null,
         online: online.has(user.id),
         unreadCount: unreadMap.get(user.id) || 0,
         lastMessage: user.last_message || "",
+        lastFileName: user.last_file_name || "",
         lastMessageType: user.last_message_type || "text",
         lastMessageAt: user.last_message_at || null,
         pinned: prefsMap.get(user.id)?.pinned || false,
@@ -1447,6 +1640,10 @@ async function buildDmPayload(row, userId) {
     content: row.content,
     type: row.message_type,
     imageUrl: row.image_url || "",
+    fileUrl: row.file_url || "",
+    fileName: row.file_name || "",
+    fileSize: row.file_size || null,
+    forwardedFromName: row.forwarded_from_name || "",
     poll,
     replyToMessageId: row.reply_to_message_id,
     editedAt: row.edited_at,
@@ -1466,6 +1663,10 @@ async function buildRoomPayload(row, userId) {
     content: row.content,
     type: row.message_type,
     imageUrl: row.image_url || "",
+    fileUrl: row.file_url || "",
+    fileName: row.file_name || "",
+    fileSize: row.file_size || null,
+    forwardedFromName: row.forwarded_from_name || "",
     poll,
     replyToMessageId: row.reply_to_message_id,
     editedAt: row.edited_at,
@@ -1502,6 +1703,10 @@ app.get("/api/messages/:userId", authMiddleware, async (req, res) => {
         m.content,
         m.message_type,
         m.image_url,
+        m.file_url,
+        m.file_name,
+        m.file_size,
+        m.forwarded_from_name,
         m.poll_id,
         m.reply_to_message_id,
         m.edited_at,
@@ -1549,6 +1754,10 @@ app.get("/api/messages/:userId", authMiddleware, async (req, res) => {
         content: message.content,
         type: message.message_type,
         imageUrl: message.image_url || "",
+        fileUrl: message.file_url || "",
+        fileName: message.file_name || "",
+        fileSize: message.file_size || null,
+        forwardedFromName: message.forwarded_from_name || "",
         poll: message.poll,
         replyToMessageId: message.reply_to_message_id,
         editedAt: message.edited_at,
@@ -1562,7 +1771,7 @@ app.get("/api/messages/:userId", authMiddleware, async (req, res) => {
   }
 });
 
-app.post("/api/messages/:userId", authMiddleware, async (req, res) => {
+app.post("/api/messages/:userId", authMiddleware, messageRateLimit, async (req, res) => {
   try {
     const peerUserId = mustBeValidId(req.params.userId);
     if (!peerUserId) {
@@ -1583,6 +1792,10 @@ app.post("/api/messages/:userId", authMiddleware, async (req, res) => {
 
     const content = normalizeText(req.body.content, 2000);
     const imageUrl = normalizeText(req.body.imageUrl, 500);
+    const fileUrl = normalizeText(req.body.fileUrl, 500);
+    const fileName = normalizeText(req.body.fileName, 180);
+    const fileSize = Number(req.body.fileSize || 0) || null;
+    const forwardedFromName = normalizeText(req.body.forwardedFromName, 120);
     const pollInput = req.body.poll || null;
     const replyToMessageId = mustBeValidId(req.body.replyToMessageId);
 
@@ -1594,9 +1807,11 @@ app.post("/api/messages/:userId", authMiddleware, async (req, res) => {
       messageType = "poll";
     } else if (imageUrl) {
       messageType = "image";
+    } else if (fileUrl) {
+      messageType = "file";
     }
 
-    if (!content && !imageUrl && !pollId) {
+    if (!content && !imageUrl && !fileUrl && !pollId) {
       res.status(400).json({ error: "Empty message" });
       return;
     }
@@ -1618,8 +1833,8 @@ app.post("/api/messages/:userId", authMiddleware, async (req, res) => {
 
     const inserted = await run(
       `
-      INSERT INTO messages (sender_id, receiver_id, content, message_type, image_url, poll_id, reply_to_message_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO messages (sender_id, receiver_id, content, message_type, image_url, file_url, file_name, file_size, poll_id, reply_to_message_id, forwarded_from_name)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       [
         req.user.id,
@@ -1627,13 +1842,17 @@ app.post("/api/messages/:userId", authMiddleware, async (req, res) => {
         content,
         messageType,
         imageUrl || null,
+        fileUrl || null,
+        fileName || null,
+        fileSize,
         pollId,
         replyToMessageId || null,
+        forwardedFromName || null,
       ]
     );
 
     const created = await get(
-      "SELECT id, sender_id, receiver_id, content, message_type, image_url, poll_id, reply_to_message_id, edited_at, deleted_at, created_at FROM messages WHERE id = ?",
+      "SELECT id, sender_id, receiver_id, content, message_type, image_url, file_url, file_name, file_size, poll_id, reply_to_message_id, forwarded_from_name, edited_at, deleted_at, created_at FROM messages WHERE id = ?",
       [inserted.id]
     );
 
@@ -1648,6 +1867,12 @@ app.post("/api/messages/:userId", authMiddleware, async (req, res) => {
         io.to(socketId).emit("message:new", payload);
       }
     }
+
+    await sendWebPushToUser(peerUserId, {
+      title: req.user.displayName || req.user.username,
+      body: content || (fileName ? `Файл: ${fileName}` : imageUrl ? "Изображение" : "Новое сообщение"),
+      url: "/",
+    });
 
     const responsePayload = await buildDmPayload(created, req.user.id);
     res.status(201).json({ message: responsePayload });
@@ -1803,7 +2028,7 @@ app.delete("/api/messages/item/:messageId", authMiddleware, async (req, res) => 
     }
 
     await run(
-      "UPDATE messages SET content = '', message_type = 'text', image_url = NULL, poll_id = NULL, deleted_at = datetime('now'), edited_at = datetime('now') WHERE id = ?",
+      "UPDATE messages SET content = '', message_type = 'text', image_url = NULL, file_url = NULL, file_name = NULL, file_size = NULL, poll_id = NULL, forwarded_from_name = NULL, deleted_at = datetime('now'), edited_at = datetime('now') WHERE id = ?",
       [messageId]
     );
     await run("DELETE FROM message_reactions WHERE scope = 'dm' AND message_id = ?", [messageId]);
@@ -2007,6 +2232,10 @@ app.post("/api/rooms", authMiddleware, async (req, res) => {
       slug = slugifyRoomName(requestedSlug);
       if (slug.length < 3) {
         res.status(400).json({ error: "Room link must be at least 3 chars" });
+        return;
+      }
+      if (isReservedRoomSlug(slug)) {
+        res.status(400).json({ error: "Room link is reserved" });
         return;
       }
       const slugExists = await get("SELECT id FROM chat_rooms WHERE slug = ?", [slug]);
@@ -2479,6 +2708,52 @@ app.get("/api/room-slug/:slug", authMiddleware, async (req, res) => {
   }
 });
 
+app.get("/api/public/room-slug/:slug", async (req, res) => {
+  try {
+    const slug = slugifyRoomName(req.params.slug);
+    if (!slug) {
+      res.status(400).json({ error: "Invalid room slug" });
+      return;
+    }
+
+    const room = await get(
+      `
+      SELECT
+        r.id,
+        r.name,
+        r.access_type,
+        r.avatar_url,
+        r.description,
+        r.slug,
+        COUNT(rm.user_id) AS members_count
+      FROM chat_rooms r
+      LEFT JOIN room_members rm ON rm.room_id = r.id
+      WHERE r.slug = ?
+      GROUP BY r.id
+      `,
+      [slug]
+    );
+    if (!room) {
+      res.status(404).json({ error: "Room not found" });
+      return;
+    }
+
+    res.json({
+      room: {
+        id: room.id,
+        name: room.name,
+        accessType: room.access_type,
+        avatarUrl: room.avatar_url || "",
+        description: room.description || "",
+        slug: room.slug || "",
+        membersCount: Number(room.members_count || 0),
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
 app.delete("/api/rooms/:roomId/members/:userId", authMiddleware, async (req, res) => {
   try {
     const roomId = mustBeValidId(req.params.roomId);
@@ -2606,6 +2881,10 @@ app.patch("/api/rooms/:roomId", authMiddleware, async (req, res) => {
       const slug = slugifyRoomName(requestedSlug);
       if (slug.length < 3) {
         res.status(400).json({ error: "Room link must be at least 3 chars" });
+        return;
+      }
+      if (isReservedRoomSlug(slug)) {
+        res.status(400).json({ error: "Room link is reserved" });
         return;
       }
       const exists = await get("SELECT id FROM chat_rooms WHERE slug = ? AND id != ?", [slug, roomId]);
@@ -2879,6 +3158,10 @@ app.get("/api/rooms/:roomId/messages", authMiddleware, async (req, res) => {
         m.content,
         m.message_type,
         m.image_url,
+        m.file_url,
+        m.file_name,
+        m.file_size,
+        m.forwarded_from_name,
         m.poll_id,
         m.reply_to_message_id,
         m.edited_at,
@@ -2913,6 +3196,10 @@ app.get("/api/rooms/:roomId/messages", authMiddleware, async (req, res) => {
         content: message.content,
         type: message.message_type,
         imageUrl: message.image_url || "",
+        fileUrl: message.file_url || "",
+        fileName: message.file_name || "",
+        fileSize: message.file_size || null,
+        forwardedFromName: message.forwarded_from_name || "",
         poll: message.poll,
         replyToMessageId: message.reply_to_message_id,
         editedAt: message.edited_at,
@@ -2933,7 +3220,7 @@ app.get("/api/rooms/:roomId/messages", authMiddleware, async (req, res) => {
   }
 });
 
-app.post("/api/rooms/:roomId/messages", authMiddleware, async (req, res) => {
+app.post("/api/rooms/:roomId/messages", authMiddleware, messageRateLimit, async (req, res) => {
   try {
     const roomId = mustBeValidId(req.params.roomId);
     if (!roomId) {
@@ -2949,6 +3236,10 @@ app.post("/api/rooms/:roomId/messages", authMiddleware, async (req, res) => {
 
     const content = normalizeText(req.body.content, 2000);
     const imageUrl = normalizeText(req.body.imageUrl, 500);
+    const fileUrl = normalizeText(req.body.fileUrl, 500);
+    const fileName = normalizeText(req.body.fileName, 180);
+    const fileSize = Number(req.body.fileSize || 0) || null;
+    const forwardedFromName = normalizeText(req.body.forwardedFromName, 120);
     const pollInput = req.body.poll || null;
     const replyToMessageId = mustBeValidId(req.body.replyToMessageId);
 
@@ -2960,9 +3251,11 @@ app.post("/api/rooms/:roomId/messages", authMiddleware, async (req, res) => {
       messageType = "poll";
     } else if (imageUrl) {
       messageType = "image";
+    } else if (fileUrl) {
+      messageType = "file";
     }
 
-    if (!content && !imageUrl && !pollId) {
+    if (!content && !imageUrl && !fileUrl && !pollId) {
       res.status(400).json({ error: "Empty message" });
       return;
     }
@@ -2980,8 +3273,8 @@ app.post("/api/rooms/:roomId/messages", authMiddleware, async (req, res) => {
 
     const inserted = await run(
       `
-      INSERT INTO room_messages (room_id, sender_id, content, message_type, image_url, poll_id, reply_to_message_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO room_messages (room_id, sender_id, content, message_type, image_url, file_url, file_name, file_size, poll_id, reply_to_message_id, forwarded_from_name)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       [
         roomId,
@@ -2989,8 +3282,12 @@ app.post("/api/rooms/:roomId/messages", authMiddleware, async (req, res) => {
         content,
         messageType,
         imageUrl || null,
+        fileUrl || null,
+        fileName || null,
+        fileSize,
         pollId,
         replyToMessageId || null,
+        forwardedFromName || null,
       ]
     );
 
@@ -3003,6 +3300,10 @@ app.post("/api/rooms/:roomId/messages", authMiddleware, async (req, res) => {
         m.content,
         m.message_type,
         m.image_url,
+        m.file_url,
+        m.file_name,
+        m.file_size,
+        m.forwarded_from_name,
         m.poll_id,
         m.reply_to_message_id,
         m.edited_at,
@@ -3029,6 +3330,17 @@ app.post("/api/rooms/:roomId/messages", authMiddleware, async (req, res) => {
       for (const socketId of sockets) {
         io.to(socketId).emit("room:message:new", payload);
       }
+    }
+
+    for (const memberId of memberIds) {
+      if (memberId === req.user.id) {
+        continue;
+      }
+      await sendWebPushToUser(memberId, {
+        title: `# ${room.name}`,
+        body: content || (fileName ? `Файл: ${fileName}` : imageUrl ? "Изображение" : "Новое сообщение"),
+        url: "/",
+      });
     }
 
     const responsePayload = await buildRoomPayload(row, req.user.id);
@@ -3148,7 +3460,7 @@ app.delete("/api/rooms/:roomId/messages/:messageId", authMiddleware, async (req,
     }
 
     await run(
-      "UPDATE room_messages SET content = '', message_type = 'text', image_url = NULL, poll_id = NULL, deleted_at = datetime('now'), edited_at = datetime('now') WHERE id = ?",
+      "UPDATE room_messages SET content = '', message_type = 'text', image_url = NULL, file_url = NULL, file_name = NULL, file_size = NULL, poll_id = NULL, forwarded_from_name = NULL, deleted_at = datetime('now'), edited_at = datetime('now') WHERE id = ?",
       [messageId]
     );
     await run("DELETE FROM message_reactions WHERE scope = 'room' AND message_id = ?", [messageId]);
@@ -3335,7 +3647,7 @@ app.delete("/api/pins", authMiddleware, async (req, res) => {
   }
 });
 
-app.get("/api/search/messages", authMiddleware, async (req, res) => {
+app.get("/api/search/messages", authMiddleware, searchRateLimit, async (req, res) => {
   try {
     const q = normalizeText(req.query.q, 120);
     const scopeRaw = String(req.query.scope || "dm").toLowerCase();
@@ -3526,7 +3838,7 @@ app.get("/api/media/shared", authMiddleware, async (req, res) => {
     if (scope === "dm") {
       const rows = await all(
         `
-        SELECT id, sender_id, receiver_id, content, message_type, image_url, created_at
+        SELECT id, sender_id, receiver_id, content, message_type, image_url, file_url, file_name, file_size, created_at
         FROM messages
         WHERE ((sender_id = ? AND receiver_id = ?) OR (sender_id = ? AND receiver_id = ?))
           AND deleted_at IS NULL
@@ -3536,6 +3848,7 @@ app.get("/api/media/shared", authMiddleware, async (req, res) => {
         [req.user.id, targetId, targetId, req.user.id, limit * 4]
       );
       const media = rows.filter((row) => row.message_type === "image").slice(0, limit);
+      const files = rows.filter((row) => row.message_type === "file").slice(0, limit);
       const links = rows
         .flatMap((row) => extractLinks(row.content).map((url) => ({ id: row.id, createdAt: row.created_at, url, senderId: row.sender_id })))
         .slice(0, limit);
@@ -3544,6 +3857,14 @@ app.get("/api/media/shared", authMiddleware, async (req, res) => {
           id: row.id,
           type: row.message_type,
           imageUrl: row.image_url || "",
+          createdAt: row.created_at,
+          senderId: row.sender_id,
+        })),
+        files: files.map((row) => ({
+          id: row.id,
+          fileUrl: row.file_url || "",
+          fileName: row.file_name || "",
+          fileSize: row.file_size || null,
           createdAt: row.created_at,
           senderId: row.sender_id,
         })),
@@ -3560,7 +3881,7 @@ app.get("/api/media/shared", authMiddleware, async (req, res) => {
 
     const rows = await all(
       `
-      SELECT id, room_id, sender_id, content, message_type, image_url, created_at
+      SELECT id, room_id, sender_id, content, message_type, image_url, file_url, file_name, file_size, created_at
       FROM room_messages
       WHERE room_id = ?
         AND deleted_at IS NULL
@@ -3570,6 +3891,7 @@ app.get("/api/media/shared", authMiddleware, async (req, res) => {
       [targetId, limit * 4]
     );
     const media = rows.filter((row) => row.message_type === "image").slice(0, limit);
+    const files = rows.filter((row) => row.message_type === "file").slice(0, limit);
     const links = rows
       .flatMap((row) => extractLinks(row.content).map((url) => ({ id: row.id, createdAt: row.created_at, url, senderId: row.sender_id })))
       .slice(0, limit);
@@ -3578,6 +3900,14 @@ app.get("/api/media/shared", authMiddleware, async (req, res) => {
         id: row.id,
         type: row.message_type,
         imageUrl: row.image_url || "",
+        createdAt: row.created_at,
+        senderId: row.sender_id,
+      })),
+      files: files.map((row) => ({
+        id: row.id,
+        fileUrl: row.file_url || "",
+        fileName: row.file_name || "",
+        fileSize: row.file_size || null,
         createdAt: row.created_at,
         senderId: row.sender_id,
       })),

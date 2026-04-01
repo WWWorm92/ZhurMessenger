@@ -11,8 +11,8 @@
       href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=Nunito+Sans:wght@400;600;700&display=swap"
       rel="stylesheet"
     />
-    <link rel="manifest" href="./manifest.webmanifest" />
-    <link rel="stylesheet" href="./styles.css" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
     <div class="ambient ambient-a"></div>
@@ -24,6 +24,9 @@
     <main class="root">
       <section id="authView" class="auth-view">
         <div class="auth-card">
+          <h1>Pulse Messenger</h1>
+          <p>Приватный realtime-мессенджер для командных комнат и личных диалогов.</p>
+          <div id="authRoomPreview" class="settings-card hidden"></div>
 
           <form id="authForm" class="stack">
             <label>
@@ -86,11 +89,12 @@
                 <button id="createRoomBtn" class="ghost" type="button">Новая</button>
                 <button id="invitationsBtn" class="ghost" type="button">Приглашения</button>
               </div>
-              <div id="listFilters" class="list-filters">
-                <button class="filter-chip active" data-list-filter="all" type="button">Все</button>
-                <button class="filter-chip" data-list-filter="unread" type="button">Непрочитанные</button>
-                <button class="filter-chip" data-list-filter="archived" type="button">Архив</button>
-              </div>
+            </div>
+
+            <div id="listFilters" class="list-filters">
+              <button class="filter-chip active" data-list-filter="all" type="button">Все</button>
+              <button class="filter-chip" data-list-filter="unread" type="button">Непрочитанные</button>
+              <button class="filter-chip" data-list-filter="archived" type="button">Архив</button>
             </div>
 
             <ul id="entityList" class="chat-list"></ul>
@@ -99,7 +103,7 @@
           <section class="center-panel panel">
             <header class="chat-head">
               <button id="openChatsBtn" class="icon-btn mobile-only" type="button" aria-label="Открыть чаты"><span class="ui-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></span></button>
-              <div class="chat-head-main">
+              <div id="chatHeadMain" class="chat-head-main">
                 <div id="chatHeadAvatar" class="avatar"></div>
                 <div>
                   <h3 id="chatTitle">Выберите чат</h3>
@@ -107,6 +111,10 @@
                 </div>
               </div>
               <div class="chat-head-actions">
+                 <button id="selectionCopyBtn" class="ghost hidden" type="button">Копировать</button>
+                 <button id="selectionForwardBtn" class="ghost hidden" type="button">Переслать</button>
+                 <button id="selectionDeleteBtn" class="ghost danger hidden" type="button">Удалить</button>
+                 <button id="selectionClearBtn" class="ghost hidden" type="button">Отмена</button>
                  <button id="chatActionsBtn" class="ghost chat-actions-trigger" type="button"><span>Действия</span><span class="ui-icon sm"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></span></button>
               </div>
             </header>
@@ -141,6 +149,7 @@
 
               <div class="composer-row">
                 <input id="imageInput" type="file" accept="image/*" class="hidden" />
+                <input id="fileInput" type="file" class="hidden" />
                 <button id="attachToggleBtn" class="icon-btn" type="button" aria-label="Вложения"><span class="ui-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></span></button>
                 <button id="emojiToggle" class="icon-btn" type="button" aria-label="Эмодзи"><span class="ui-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M9 10h.01M15 10h.01" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/><path d="M9 14c.8.9 1.8 1.3 3 1.3s2.2-.4 3-1.3" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></span></button>
                 <input id="messageInput" type="text" maxlength="2000" placeholder="Сообщение..." disabled />
@@ -149,6 +158,7 @@
 
               <div id="attachMenu" class="attach-menu hidden">
                  <button id="imageBtn" type="button"><span class="ui-icon sm"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4.5" y="5.5" width="15" height="13" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.7"/><circle cx="9" cy="10" r="1.2" fill="currentColor"/><path d="m7 16 3.2-3.2a1 1 0 0 1 1.4 0l1.8 1.8 2.1-2.1a1 1 0 0 1 1.4 0L18 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span>Изображение</span></button>
+                 <button id="fileBtn" type="button"><span class="ui-icon sm"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 4h6l4 4v11a1 1 0 0 1-1 1H8a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M14 4v4h4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg></span><span>Файл</span></button>
                  <button id="pollBtn" type="button"><span class="ui-icon sm"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 18V9M12 18V6M18 18v-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M4 18h16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></span><span>Опрос</span></button>
               </div>
 
@@ -223,6 +233,6 @@
     <div id="contextMenu" class="context-menu hidden"></div>
 
     <script src="/socket.io/socket.io.js"></script>
-    <script src="./app.js"></script>
+    <script src="/app.js"></script>
   </body>
 </html>

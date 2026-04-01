@@ -90,8 +90,12 @@ async function initDb() {
 
   await ensureColumn("messages", "message_type", "TEXT NOT NULL DEFAULT 'text'");
   await ensureColumn("messages", "image_url", "TEXT DEFAULT NULL");
+  await ensureColumn("messages", "file_url", "TEXT DEFAULT NULL");
+  await ensureColumn("messages", "file_name", "TEXT DEFAULT NULL");
+  await ensureColumn("messages", "file_size", "INTEGER DEFAULT NULL");
   await ensureColumn("messages", "poll_id", "INTEGER DEFAULT NULL");
   await ensureColumn("messages", "reply_to_message_id", "INTEGER DEFAULT NULL");
+  await ensureColumn("messages", "forwarded_from_name", "TEXT DEFAULT NULL");
   await ensureColumn("messages", "edited_at", "TEXT DEFAULT NULL");
   await ensureColumn("messages", "deleted_at", "TEXT DEFAULT NULL");
 
@@ -196,8 +200,12 @@ async function initDb() {
     "TEXT NOT NULL DEFAULT 'text'"
   );
   await ensureColumn("room_messages", "image_url", "TEXT DEFAULT NULL");
+  await ensureColumn("room_messages", "file_url", "TEXT DEFAULT NULL");
+  await ensureColumn("room_messages", "file_name", "TEXT DEFAULT NULL");
+  await ensureColumn("room_messages", "file_size", "INTEGER DEFAULT NULL");
   await ensureColumn("room_messages", "poll_id", "INTEGER DEFAULT NULL");
   await ensureColumn("room_messages", "reply_to_message_id", "INTEGER DEFAULT NULL");
+  await ensureColumn("room_messages", "forwarded_from_name", "TEXT DEFAULT NULL");
   await ensureColumn("room_messages", "edited_at", "TEXT DEFAULT NULL");
   await ensureColumn("room_messages", "deleted_at", "TEXT DEFAULT NULL");
 

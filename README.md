@@ -82,13 +82,15 @@ Copy `.env.example` and adjust values.
 - `HOST` - bind host, usually `127.0.0.1` behind reverse proxy or `0.0.0.0` in container
 - `PORT` - app port
 - `JWT_SECRET` - required in production
-- `CORS_ORIGIN` - allowed frontend origin, for example `https://chat.example.com`
+- `CORS_ORIGIN` - required in production; allowed frontend origin, for example `https://chat.example.com`
 - `DB_PATH` - SQLite file path
 - `UPLOADS_DIR` - upload storage path
 - `ACCESS_TOKEN_TTL` - short-lived access token ttl, default `15m`
 - `REFRESH_TOKEN_TTL_DAYS` - refresh session ttl in days, default `30`
 - `HTTPS_KEY_PATH` / `HTTPS_CERT_PATH` - optional direct HTTPS in Node
 - `WEB_PUSH_PUBLIC_KEY` - optional web-push public key
+- `WEB_PUSH_PRIVATE_KEY` - optional web-push private key
+- `WEB_PUSH_SUBJECT` - contact for VAPID, e.g. `mailto:admin@example.com`
 
 ## Deploy Anywhere
 

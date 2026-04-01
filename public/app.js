@@ -6,7 +6,7 @@ const APP_VERSION = "2026.03.30-1";
 
 const state = {
   mode: "login",
-  token: localStorage.getItem("token") || "",
+  token: "",
   me: null,
   users: [],
   rooms: [],
@@ -29,6 +29,8 @@ const state = {
   unseenCountByChatKey: new Map(),
   newlyArrivedMessageIds: new Set(),
   renderWindowStartByChatKey: new Map(),
+  selectionMode: false,
+  selectedMessageIds: new Set(),
   pendingImage: null,
   replyToMessageId: null,
   onlineIds: new Set(),
@@ -58,6 +60,7 @@ const els = {
   authForm: document.getElementById("authForm"),
   authSubmitBtn: document.getElementById("authSubmitBtn"),
   authError: document.getElementById("authError"),
+  authRoomPreview: document.getElementById("authRoomPreview"),
   usernameInput: document.getElementById("usernameInput"),
   passwordInput: document.getElementById("passwordInput"),
   displayNameField: document.getElementById("displayNameField"),
@@ -93,9 +96,14 @@ const els = {
   listFilters: document.getElementById("listFilters"),
   entityList: document.getElementById("entityList"),
   chatHeadAvatar: document.getElementById("chatHeadAvatar"),
+  chatHeadMain: document.getElementById("chatHeadMain"),
   chatTitle: document.getElementById("chatTitle"),
   chatStatus: document.getElementById("chatStatus"),
   chatActionsBtn: document.getElementById("chatActionsBtn"),
+  selectionCopyBtn: document.getElementById("selectionCopyBtn"),
+  selectionForwardBtn: document.getElementById("selectionForwardBtn"),
+  selectionDeleteBtn: document.getElementById("selectionDeleteBtn"),
+  selectionClearBtn: document.getElementById("selectionClearBtn"),
   jumpBottomBtn: document.getElementById("jumpBottomBtn"),
   logoutBtn: document.getElementById("logoutBtn"),
   messages: document.getElementById("messages"),
@@ -104,9 +112,11 @@ const els = {
   messageInput: document.getElementById("messageInput"),
   sendBtn: document.getElementById("sendBtn"),
   imageInput: document.getElementById("imageInput"),
+  fileInput: document.getElementById("fileInput"),
   attachToggleBtn: document.getElementById("attachToggleBtn"),
   attachMenu: document.getElementById("attachMenu"),
   imageBtn: document.getElementById("imageBtn"),
+  fileBtn: document.getElementById("fileBtn"),
   pollBtn: document.getElementById("pollBtn"),
   emojiToggle: document.getElementById("emojiToggle"),
   emojiPanel: document.getElementById("emojiPanel"),
@@ -154,6 +164,31 @@ function showToast(message, type = "info") {
   setTimeout(cleanup, 3200);
 }
 
+function refreshSelectionBar() {
+  updateChatHeader();
+}
+
+function clearMessageSelection() {
+  state.selectionMode = false;
+  state.selectedMessageIds.clear();
+  refreshSelectionBar();
+  renderMessages();
+}
+
+function toggleMessageSelection(messageId) {
+  state.selectionMode = true;
+  if (state.selectedMessageIds.has(messageId)) {
+    state.selectedMessageIds.delete(messageId);
+  } else {
+    state.selectedMessageIds.add(messageId);
+  }
+  if (!state.selectedMessageIds.size) {
+    state.selectionMode = false;
+  }
+  refreshSelectionBar();
+  renderMessages();
+}
+
 function refreshUpdateBanner() {
   const hasUpdate = Boolean(state.remoteVersion && state.remoteVersion !== APP_VERSION);
   els.updateBanner?.classList.toggle("hidden", !hasUpdate);
@@ -183,11 +218,6 @@ function applyTheme(theme) {
 
 function setToken(token) {
   state.token = token;
-  if (token) {
-    localStorage.setItem("token", token);
-  } else {
-    localStorage.removeItem("token");
-  }
 }
 
 function setMode(mode) {
@@ -276,6 +306,23 @@ function formatDateTime(value) {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+function formatLastSeen(value) {
+  const ms = asUtcMs(value);
+  if (!ms) {
+    return "был(а) давно";
+  }
+  const diff = Date.now() - ms;
+  const minute = 60 * 1000;
+  const hour = 60 * minute;
+  if (diff < 5 * minute) {
+    return "был(а) недавно";
+  }
+  if (diff < hour) {
+    return `был(а) ${Math.max(1, Math.round(diff / minute))} мин назад`;
+  }
+  return `был(а) ${formatDateTime(value)}`;
 }
 
 function formatDayLabel(value) {
@@ -537,6 +584,44 @@ async function uploadRoomAvatar(file) {
   return api("/api/uploads/room-avatar", { method: "POST", body: form, isFormData: true });
 }
 
+async function uploadMessageFile(file) {
+  const form = new FormData();
+  form.append("file", file);
+
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", "/api/uploads/message-file", true);
+    if (state.token) {
+      xhr.setRequestHeader("Authorization", `Bearer ${state.token}`);
+    }
+
+    xhr.upload.onprogress = (event) => {
+      if (!event.lengthComputable) {
+        return;
+      }
+      const percent = Math.max(0, Math.min(100, Math.round((event.loaded / event.total) * 100)));
+      setUploadProgress(percent);
+    };
+
+    xhr.onerror = () => reject(new Error("Ошибка сети при загрузке файла"));
+    xhr.onload = () => {
+      try {
+        const data = JSON.parse(xhr.responseText || "{}");
+        if (xhr.status < 200 || xhr.status >= 300) {
+          reject(new Error(data.error || `Upload failed (${xhr.status})`));
+          return;
+        }
+        resolve(data);
+      } catch {
+        reject(new Error(`Некорректный ответ сервера (${xhr.status})`));
+      }
+    };
+
+    setUploadProgress(3);
+    xhr.send(form);
+  });
+}
+
 function isNotificationsAvailable() {
   return "Notification" in window;
 }
@@ -763,6 +848,34 @@ function openImageViewer(imageUrl) {
 function showAuth() {
   els.authView.classList.remove("hidden");
   els.chatView.classList.add("hidden");
+}
+
+async function loadPublicRoomPreviewIfNeeded() {
+  const slugMatch = location.pathname.match(/^\/room\/([a-z0-9-]+)$/i);
+  if (!slugMatch?.[1] || state.token || !els.authRoomPreview) {
+    els.authRoomPreview?.classList.add("hidden");
+    return;
+  }
+  try {
+    const response = await fetch(`/api/public/room-slug/${encodeURIComponent(slugMatch[1])}`);
+    const data = await response.json().catch(() => ({}));
+    const room = data.room;
+    if (!room) return;
+    els.authRoomPreview.classList.remove("hidden");
+    els.authRoomPreview.innerHTML = `
+      <div class="profile-hero-main">
+        <div class="avatar profile-hero-avatar">${room.avatarUrl ? `<img src="${escapeHtml(room.avatarUrl)}" alt="${escapeHtml(room.name)}" />` : (room.accessType === "private" ? iconMarkup("lock") : iconMarkup("room"))}</div>
+        <div>
+          <strong># ${escapeHtml(room.name)}</strong>
+          <p class="msg-time">${room.accessType === "private" ? "Закрытая" : "Публичная"} комната · участников: ${room.membersCount}</p>
+          ${room.description ? `<p class="msg-time">${escapeHtml(room.description)}</p>` : ""}
+        </div>
+      </div>
+      <div class="settings-empty room-link-box"><strong>Войдите, чтобы открыть комнату</strong><p class="msg-time">${escapeHtml(`${location.origin}/room/${room.slug}`)}</p></div>
+    `;
+  } catch {
+    els.authRoomPreview.classList.add("hidden");
+  }
 }
 
 function showChat() {
@@ -1321,6 +1434,9 @@ function messagePreviewText(message) {
   if (message.type === "poll") {
     return base || "[опрос]";
   }
+  if (message.type === "file") {
+    return message.fileName || "[файл]";
+  }
   return base;
 }
 
@@ -1331,6 +1447,7 @@ function touchDmPreviewFromMessage(message, { incrementUnread = false } = {}) {
     return;
   }
   user.lastMessage = messagePreviewText(message);
+  user.lastFileName = message.fileName || user.lastFileName || "";
   user.lastMessageType = message.type || "text";
   user.lastMessageAt = message.createdAt || user.lastMessageAt;
   if (incrementUnread) {
@@ -1423,7 +1540,7 @@ function renderEntityList() {
       li.className = "chat-item";
       li.classList.toggle("active", state.selected?.type === "dm" && state.selected.id === user.id);
       const secondary = user.lastMessageAt
-      ? `${user.lastMessageType === "image" ? `${iconMarkup("image", "inline-icon")}` : user.lastMessageType === "poll" ? `${iconMarkup("poll", "inline-icon")}` : ""}${escapeHtml((user.lastMessage || "").slice(0, 52) || "[медиа]")}`
+      ? `${user.lastMessageType === "image" ? `${iconMarkup("image", "inline-icon")}` : user.lastMessageType === "poll" ? `${iconMarkup("poll", "inline-icon")}` : user.lastMessageType === "file" ? `${iconMarkup("room", "inline-icon")}` : ""}${escapeHtml((user.lastMessageType === "file" ? (user.lastFileName || user.lastMessage) : user.lastMessage || "").slice(0, 52) || "[медиа]")}`
         : `@${escapeHtml(user.username)} ${state.onlineIds.has(user.id) ? "· онлайн" : "· офлайн"}`;
       li.innerHTML = `
         <div class="avatar">${avatarMarkup(user)}</div>
@@ -1730,12 +1847,36 @@ function renderPoll(poll) {
   `;
 }
 
+function formatFileSize(bytes) {
+  const value = Number(bytes || 0);
+  if (!value) return "";
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${Math.round(value / 1024)} KB`;
+  return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function renderFileMessage(message) {
+  if (!message.fileUrl || message.deletedAt) {
+    return "";
+  }
+  return `
+    <a class="file-box" href="${escapeHtml(message.fileUrl)}" target="_blank" rel="noopener noreferrer">
+      ${iconMarkup("room", "sm")}
+      <div>
+        <strong>${escapeHtml(message.fileName || "Файл")}</strong>
+        <p class="msg-time">${escapeHtml(formatFileSize(message.fileSize) || "Документ")}</p>
+      </div>
+    </a>
+  `;
+}
+
 
 function renderMessages({ forceBottom = false } = {}) {
   const prevDistanceFromBottom =
     els.messages.scrollHeight - els.messages.scrollTop - els.messages.clientHeight;
   const wasNearBottom = prevDistanceFromBottom <= 72;
   els.messages.innerHTML = "";
+  refreshSelectionBar();
 
   if (!state.selected) {
     els.messages.innerHTML = `<div class="empty-chat-state"><strong>Выберите чат</strong><p class="msg-time">Личные диалоги, комнаты и приглашения появятся здесь. Начните с контактов или списка комнат.</p></div>`;
@@ -1841,20 +1982,24 @@ function renderMessages({ forceBottom = false } = {}) {
       !replyTarget;
 
     const isNewlyArrived = state.newlyArrivedMessageIds.has(message.id);
-    node.className = `msg ${mine ? "mine" : ""} ${message.deletedAt ? "deleted" : ""} ${grouped ? "grouped" : ""} ${isNewlyArrived ? "new-appear" : ""}`;
+    const selected = state.selectedMessageIds.has(message.id);
+    node.className = `msg ${mine ? "mine" : ""} ${message.deletedAt ? "deleted" : ""} ${grouped ? "grouped" : ""} ${isNewlyArrived ? "new-appear" : ""} ${selected ? "selected" : ""}`;
     node.setAttribute("data-msg-id", String(message.id));
     const readMark =
       state.selected?.type === "dm" && mine
         ? `<span class="msg-read">${createdAtMs && peerReadAt && createdAtMs <= peerReadAt ? "✓✓" : "✓"}</span>`
         : "";
     node.innerHTML = `
+      ${selected ? `<div class="msg-select-marker">${iconMarkup("arrowRight", "xs")}</div>` : ""}
       <div class="msg-head ${grouped ? "hidden" : ""}">
         <span class="msg-author">${escapeHtml(sender.displayName)}${sender.isAdmin ? " 👑" : ""}</span>
         <span class="msg-time">#${message.id}</span>
       </div>
+      ${message.forwardedFromName ? `<div class="msg-forwarded">Forwarded from ${escapeHtml(message.forwardedFromName)}</div>` : ""}
       ${replyTarget ? `<div class="msg-reply">${escapeHtml(replyPreview.slice(0, 120))}</div>` : ""}
       <div class="msg-text">${message.deletedAt ? "Сообщение удалено" : escapeHtml(message.content || "")}</div>
       ${!message.deletedAt && message.imageUrl ? `<img class="msg-image" src="${escapeHtml(message.imageUrl)}" alt="image" />` : ""}
+      ${!message.deletedAt ? renderFileMessage(message) : ""}
       ${!message.deletedAt ? renderPoll(message.poll) : ""}
       <div class="reactions">
         ${(message.reactions || [])
@@ -1873,7 +2018,19 @@ function renderMessages({ forceBottom = false } = {}) {
       event.preventDefault();
       openMessageActions(message.id, event.clientX, event.clientY);
     });
-    attachLongPress(node, (x, y) => openMessageActions(message.id, x, y));
+    attachLongPress(node, (x, y) => {
+      if (!state.selectionMode) {
+        toggleMessageSelection(message.id);
+        return;
+      }
+      openMessageActions(message.id, x, y);
+    });
+    node.addEventListener("click", (event) => {
+      if (state.selectionMode) {
+        event.preventDefault();
+        toggleMessageSelection(message.id);
+      }
+    });
     els.messages.appendChild(node);
     if (isNewlyArrived) {
       setTimeout(() => {
@@ -1987,13 +2144,32 @@ function expandRenderWindowBackwardIfNeeded() {
 }
 
 function updateChatHeader() {
+  const chatHead = document.querySelector('.chat-head');
   els.chatActionsBtn.classList.add("hidden");
+  els.selectionCopyBtn?.classList.add("hidden");
+  els.selectionForwardBtn?.classList.add("hidden");
+  els.selectionDeleteBtn?.classList.add("hidden");
+  els.selectionClearBtn?.classList.add("hidden");
+  els.chatHeadMain?.classList.remove("clickable");
+  chatHead?.classList.remove('selection-mode');
   if (!state.selected) {
     els.chatTitle.textContent = "Выберите чат";
     els.chatStatus.textContent = "Личные и групповые диалоги";
     els.chatHeadAvatar.innerHTML = iconMarkup("chat");
     els.messageInput.disabled = true;
     els.sendBtn.disabled = true;
+    return;
+  }
+
+  if (state.selectionMode && state.selectedMessageIds.size) {
+    chatHead?.classList.add('selection-mode');
+    els.chatTitle.textContent = `${state.selectedMessageIds.size} выбрано`;
+    els.chatStatus.textContent = "Режим выбора сообщений";
+    els.chatHeadAvatar.innerHTML = iconMarkup("chat");
+    els.selectionCopyBtn?.classList.remove("hidden");
+    els.selectionForwardBtn?.classList.remove("hidden");
+    els.selectionDeleteBtn?.classList.remove("hidden");
+    els.selectionClearBtn?.classList.remove("hidden");
     return;
   }
 
@@ -2004,6 +2180,7 @@ function updateChatHeader() {
     if (!user) {
       return;
     }
+    els.chatHeadMain?.classList.add("clickable");
     els.chatTitle.textContent = user.displayName;
     els.chatStatus.textContent = resolveTypingStatus(state.onlineIds.has(user.id) ? "В сети" : "Не в сети");
     els.chatHeadAvatar.innerHTML = avatarMarkup(user);
@@ -2016,6 +2193,7 @@ function updateChatHeader() {
   if (!room) {
     return;
   }
+  els.chatHeadMain?.classList.add("clickable");
   els.chatTitle.textContent = `# ${room.name}`;
   const roomBaseStatus = room.joined
     ? `${room.description ? room.description.slice(0, 80) : `Участников: ${room.membersCount}`}`
@@ -2389,6 +2567,189 @@ async function openRoomAuditSheet(roomId) {
   openSheet("Журнал модерации", "", html, async () => {});
 }
 
+async function openRoomProfileSheet(roomId, initialTab = "info") {
+  const room = state.rooms.find((item) => item.id === roomId);
+  if (!room) {
+    throw new Error("Комната не найдена");
+  }
+
+  const roomLink = room.slug ? `${location.origin}/room/${room.slug}` : "";
+  const canManage = Boolean(room.canManage) || state.me?.isAdmin || room.createdBy === state.me?.id;
+  renderSheetLoading(`# ${room.name}`, 5);
+  const [mediaData, detailData] = await Promise.all([
+    api(`/api/media/shared?scope=room&targetId=${roomId}&limit=80`),
+    api(`/api/rooms/${roomId}`),
+  ]);
+  const media = mediaData.media || [];
+  const files = mediaData.files || [];
+  const links = mediaData.links || [];
+  const members = detailData.members || [];
+
+  const memberPreview = members.slice(0, 6);
+  const membersHtml = memberPreview.length
+    ? `<div class="member-preview-list">${memberPreview
+        .map(
+          (member) => `
+            <button type="button" class="member-preview-item" data-open-member-dm="${member.id}">
+              <div class="avatar small">${avatarMarkup(member)}</div>
+              <div>
+                <strong>${escapeHtml(member.displayName)}</strong>
+                <p class="msg-time">@${escapeHtml(member.username)}</p>
+              </div>
+              ${member.role ? `<span class="role-chip ${escapeHtml(roomRoleLabel(member.role))}">${escapeHtml(roomRoleLabel(member.role))}</span>` : ""}
+            </button>
+          `
+        )
+        .join("")}</div>${members.length > memberPreview.length ? `<p class="msg-time">И еще ${members.length - memberPreview.length}</p>` : ""}`
+    : `<div class="settings-empty"><strong>Пусто</strong><p class="msg-time">Состав комнаты пока не загружен</p></div>`;
+
+  const mediaPreview = media.slice(0, 3);
+  const mediaSummaryHtml = `
+    <div class="settings-meta-grid room-summary-grid">
+      <div class="settings-pill">Участников: ${room.membersCount}</div>
+      <div class="settings-pill">Медиа: ${media.length}</div>
+      <div class="settings-pill">Ссылки: ${links.length}</div>
+      <div class="settings-pill">Файлы: ${files.length}</div>
+      <div class="settings-pill">Тип: ${room.accessType === "private" ? "private" : "public"}</div>
+    </div>
+    ${mediaPreview.length ? `<div class="room-media-strip">${mediaPreview.map((item) => `<button type="button" class="room-media-strip-item" data-open-image="${escapeHtml(item.imageUrl)}"><img src="${escapeHtml(item.imageUrl)}" alt="image" /></button>`).join("")}${media.length > mediaPreview.length ? `<button type="button" class="room-media-strip-more" data-room-profile-tab-jump="media">+${media.length - mediaPreview.length}</button>` : ""}</div>` : ""}
+  `;
+
+  const mediaHtml = media.length
+    ? `<div class="shared-grid">${media
+        .map((item) => `<button type="button" class="shared-media-card image" data-open-image="${escapeHtml(item.imageUrl)}"><img src="${escapeHtml(item.imageUrl)}" alt="image" /><span class="msg-time">${formatTime(item.createdAt)}</span></button>`)
+        .join("")}</div>`
+    : `<div class="settings-empty"><strong>Пусто</strong><p class="msg-time">Изображений пока нет</p></div>`;
+  const filesHtml = files.length
+    ? `<div class="menu-contacts search-results-list">${files.map((item) => `<a class="menu-contact-item settings-contact-card" href="${escapeHtml(item.fileUrl)}" target="_blank" rel="noopener noreferrer"><div><strong>${escapeHtml(item.fileName || "Файл")}</strong><p class="msg-time">${escapeHtml(formatFileSize(item.fileSize) || "Документ")} · ${formatTime(item.createdAt)}</p></div><span class="menu-badge">→</span></a>`).join("")}</div>`
+    : `<div class="settings-empty"><strong>Пусто</strong><p class="msg-time">Файлов пока нет</p></div>`;
+
+  const linksHtml = links.length
+    ? `<div class="menu-contacts search-results-list">${links.map((item) => `<a class="menu-contact-item settings-contact-card" href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer"><div><strong>${escapeHtml(item.url)}</strong><p class="msg-time">Сообщение #${item.id} · ${formatTime(item.createdAt)}</p></div><span class="menu-badge">→</span></a>`).join("")}</div>`
+    : `<div class="settings-empty"><strong>Пусто</strong><p class="msg-time">Ссылок пока нет</p></div>`;
+
+  openSheet(
+    `# ${room.name}`,
+    "",
+    `
+      <div class="stack settings-layout room-profile-layout">
+        <section class="settings-hero room-profile-hero">
+          <div class="profile-hero-main">
+            <div class="avatar profile-hero-avatar">${room.avatarUrl ? `<img src="${escapeHtml(room.avatarUrl)}" alt="${escapeHtml(room.name)}" />` : (isPrivateRoom(room) ? iconMarkup("lock") : iconMarkup("room"))}</div>
+            <div>
+              <strong>${escapeHtml(room.name)}</strong>
+              <p class="msg-time">${room.accessType === "private" ? "Закрытая комната" : "Публичная комната"} · участников: ${room.membersCount}</p>
+              ${room.description ? `<p class="msg-time">${escapeHtml(room.description)}</p>` : ""}
+            </div>
+          </div>
+          <div class="room-profile-actions">
+            ${roomLink ? `<button type="button" class="icon-btn" data-room-share-link="${escapeHtml(roomLink)}" aria-label="Поделиться ссылкой">${iconMarkup("arrowRight")}</button>` : ""}
+            ${canManage ? `<button type="button" class="icon-btn" data-room-open-manage="${room.id}" aria-label="Настройки комнаты">${iconMarkup("room")}</button>` : ""}
+          </div>
+        </section>
+        <section class="settings-card">
+          <div class="segmented compact room-profile-tabs">
+            <button class="seg-btn ${initialTab === "info" ? "active" : ""}" data-room-profile-tab="info" type="button">Инфо</button>
+            <button class="seg-btn ${initialTab === "media" ? "active" : ""}" data-room-profile-tab="media" type="button">Медиа</button>
+            <button class="seg-btn ${initialTab === "links" ? "active" : ""}" data-room-profile-tab="links" type="button">Ссылки</button>
+            <button class="seg-btn ${initialTab === "files" ? "active" : ""}" data-room-profile-tab="files" type="button">Файлы</button>
+          </div>
+        </section>
+        <section class="settings-card room-profile-panel ${initialTab === "info" ? "" : "hidden"}" data-room-profile-panel="info">
+          <div class="settings-card-head"><div><strong>О комнате</strong><p class="msg-time">Основная информация и ссылка для приглашения.</p></div></div>
+          ${mediaSummaryHtml}
+          ${room.description ? `<p>${escapeHtml(room.description)}</p>` : `<div class="settings-empty"><strong>Пусто</strong><p class="msg-time">Описание еще не заполнено</p></div>`}
+          ${roomLink ? `<button type="button" class="settings-empty room-link-box" data-copy-room-link="${escapeHtml(roomLink)}"><strong>${escapeHtml(room.slug)}</strong><p class="msg-time">${escapeHtml(roomLink)}</p></button>` : ""}
+          <div class="settings-card-head"><div><strong>Участники</strong><p class="msg-time">Основной состав комнаты.</p></div></div>
+          ${membersHtml}
+        </section>
+        <section class="settings-card room-profile-panel ${initialTab === "media" ? "" : "hidden"}" data-room-profile-panel="media">
+          <div class="settings-card-head"><div><strong>Медиа</strong><p class="msg-time">Все изображения комнаты.</p></div></div>
+          ${mediaHtml}
+        </section>
+        <section class="settings-card room-profile-panel ${initialTab === "links" ? "" : "hidden"}" data-room-profile-panel="links">
+          <div class="settings-card-head"><div><strong>Ссылки</strong><p class="msg-time">Все ссылки, найденные в сообщениях.</p></div></div>
+          ${linksHtml}
+        </section>
+        <section class="settings-card room-profile-panel ${initialTab === "files" ? "" : "hidden"}" data-room-profile-panel="files">
+          <div class="settings-card-head"><div><strong>Файлы</strong><p class="msg-time">Все документы и вложения комнаты.</p></div></div>
+          ${filesHtml}
+        </section>
+      </div>
+    `,
+    async () => {}
+  );
+
+  els.sheetBody.querySelectorAll("[data-room-profile-tab]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const tab = button.dataset.roomProfileTab;
+      els.sheetBody.querySelectorAll("[data-room-profile-tab]").forEach((item) => {
+        item.classList.toggle("active", item.dataset.roomProfileTab === tab);
+      });
+      els.sheetBody.querySelectorAll("[data-room-profile-panel]").forEach((panel) => {
+        panel.classList.toggle("hidden", panel.dataset.roomProfilePanel !== tab);
+      });
+    });
+  });
+
+  els.sheetBody.querySelectorAll("[data-open-image]").forEach((button) => {
+    button.addEventListener("click", () => openImageViewer(button.dataset.openImage || ""));
+  });
+
+  els.sheetBody.querySelectorAll("[data-room-profile-tab-jump]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const tab = button.dataset.roomProfileTabJump;
+      els.sheetBody.querySelectorAll("[data-room-profile-tab]").forEach((item) => {
+        item.classList.toggle("active", item.dataset.roomProfileTab === tab);
+      });
+      els.sheetBody.querySelectorAll("[data-room-profile-panel]").forEach((panel) => {
+        panel.classList.toggle("hidden", panel.dataset.roomProfilePanel !== tab);
+      });
+    });
+  });
+
+  els.sheetBody.querySelectorAll("[data-open-member-dm]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const userId = Number(button.dataset.openMemberDm);
+      if (!userId || userId === state.me?.id) {
+        return;
+      }
+      closeSheet();
+      await selectDm(userId);
+    });
+  });
+
+  els.sheetBody.querySelector("[data-copy-room-link]")?.addEventListener("click", async (event) => {
+    const value = String(event.currentTarget.dataset.copyRoomLink || "");
+    if (!value) return;
+    try {
+      await navigator.clipboard.writeText(value);
+      showToast("Ссылка комнаты скопирована", "success");
+    } catch {
+      showToast(value, "info");
+    }
+  });
+
+  els.sheetBody.querySelector("[data-room-open-manage]")?.addEventListener("click", async () => {
+    await openRoomMembersSheet(roomId);
+  });
+
+  els.sheetBody.querySelector("[data-room-share-link]")?.addEventListener("click", async (event) => {
+    const value = String(event.currentTarget.dataset.roomShareLink || "");
+    if (!value) return;
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: room.name, text: `Присоединяйся к комнате ${room.name}`, url: value });
+      } else {
+        await navigator.clipboard.writeText(value);
+        showToast("Ссылка комнаты скопирована", "success");
+      }
+    } catch {
+      // ignore cancel
+    }
+  });
+}
+
 async function openInviteUsersSheet(roomId) {
   if (!roomId) {
     throw new Error("Сначала выбери комнату");
@@ -2701,6 +3062,95 @@ async function deleteMessage(messageId) {
   }
 }
 
+async function deleteSelectedMessages() {
+  const ids = Array.from(state.selectedMessageIds);
+  for (const id of ids) {
+    await deleteMessage(id);
+  }
+  clearMessageSelection();
+}
+
+async function copySelectedMessages() {
+  const ids = Array.from(state.selectedMessageIds);
+  const messages = ids.map((id) => getMessageById(id)).filter(Boolean);
+  if (!messages.length) {
+    return;
+  }
+  const text = messages
+    .map((message) => {
+      if (message.deletedAt) return "[Удалено]";
+      if (message.fileUrl) return message.fileName || "[Файл]";
+      if (message.imageUrl) return message.content || "[Изображение]";
+      if (message.poll) return message.poll.question;
+      return message.content || "";
+    })
+    .filter(Boolean)
+    .join("\n\n");
+  if (!text) return;
+  await navigator.clipboard.writeText(text);
+  showToast("Сообщения скопированы", "success");
+}
+
+function buildForwardPayload(message) {
+  if (message.deletedAt) return null;
+  const forwardedFromName = state.selected?.type === "room"
+    ? (message.sender?.displayName || "Комната")
+    : (state.users.find((u) => u.id === message.senderId)?.displayName || state.me?.displayName || "Диалог");
+  if (message.poll) {
+    return { content: `${message.poll.question}
+
+${message.poll.options.map((o) => `- ${o.text}`).join("\n")}`, forwardedFromName };
+  }
+  if (message.imageUrl) {
+    return { content: message.content || "", imageUrl: message.imageUrl, forwardedFromName };
+  }
+  if (message.fileUrl) {
+    return { content: "", fileUrl: message.fileUrl, fileName: message.fileName || "Файл", fileSize: message.fileSize || null, forwardedFromName };
+  }
+  return { content: message.content || "", forwardedFromName };
+}
+
+async function sendPayloadToTarget(target, payload) {
+  if (target.scope === "dm") {
+    await api(`/api/messages/${target.id}`, { method: "POST", body: JSON.stringify(payload) });
+    return;
+  }
+  await api(`/api/rooms/${target.id}/messages`, { method: "POST", body: JSON.stringify(payload) });
+}
+
+function buildForwardTargets() {
+  const dmTargets = state.users.map((user) => ({ id: user.id, scope: "dm", label: user.displayName, sublabel: `@${user.username}` }));
+  const roomTargets = state.rooms.filter((room) => room.joined).map((room) => ({ id: room.id, scope: "room", label: `# ${room.name}`, sublabel: room.description || (room.accessType === "private" ? "Закрытая комната" : "Публичная комната") }));
+  return [...dmTargets, ...roomTargets];
+}
+
+function openForwardSheet(messageIds) {
+  const ids = messageIds.length ? messageIds : Array.from(state.selectedMessageIds);
+  const messages = ids.map((id) => getMessageById(id)).filter(Boolean);
+  if (!messages.length) return;
+  const targets = buildForwardTargets();
+  openSheet(
+    "Переслать",
+    "",
+    `<div class="stack settings-layout"><section class="settings-hero"><div><strong>Переслать сообщения</strong><p class="msg-time">Выберите диалог или комнату для пересылки.</p></div></section><section class="settings-card"><div class="menu-contacts search-results-list">${targets.map((target) => `<button type="button" class="menu-contact-item settings-contact-card" data-forward-scope="${target.scope}" data-forward-id="${target.id}"><div><strong>${escapeHtml(target.label)}</strong><p class="msg-time">${escapeHtml(target.sublabel)}</p></div><span class="menu-badge">→</span></button>`).join("")}</div></section></div>`,
+    async () => {}
+  );
+  els.sheetBody.querySelectorAll("[data-forward-id]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const target = { scope: button.dataset.forwardScope, id: Number(button.dataset.forwardId) };
+      for (const message of messages) {
+        const payload = buildForwardPayload(message);
+        if (payload) {
+          await sendPayloadToTarget(target, payload);
+        }
+      }
+      closeSheet();
+      clearMessageSelection();
+      showToast("Сообщения пересланы", "success");
+    });
+  });
+}
+
 async function toggleReaction(messageId, emoji) {
   if (!state.selected) {
     return;
@@ -2780,6 +3230,7 @@ function openMessageActions(messageId, x, y) {
 
   const items = [
     { label: "Ответить", onClick: async () => setReply(messageId) },
+    { label: state.selectedMessageIds.has(messageId) ? "Снять выбор" : "Выбрать", onClick: async () => toggleMessageSelection(messageId) },
     { label: "Реакция", onClick: async () => openReactionSheet(messageId) },
     {
       label: isPinned ? "Открепить" : "Закрепить",
@@ -3208,6 +3659,38 @@ async function sendImageMessage(file) {
   els.messageInput.value = "";
   clearReply();
   setUploadProgress(100);
+}
+
+async function sendFileMessage(file) {
+  if (!file || !state.selected) {
+    return;
+  }
+  const upload = await uploadMessageFile(file);
+  const payload = {
+    content: "",
+    fileUrl: upload.fileUrl,
+    fileName: upload.fileName,
+    fileSize: upload.fileSize,
+    replyToMessageId: state.replyToMessageId,
+  };
+  if (state.selected.type === "dm") {
+    const response = await api(`/api/messages/${state.selected.id}`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    upsertDmMessage(response.message);
+    await loadDmMessages(state.selected.id);
+    renderMessages({ forceBottom: true });
+  } else {
+    const response = await api(`/api/rooms/${state.selected.id}/messages`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    upsertRoomMessage(response.message);
+    await loadRoomMessages(state.selected.id);
+    renderMessages({ forceBottom: true });
+  }
+  clearReply();
 }
 
 async function fetchAdminData() {
@@ -3879,6 +4362,123 @@ async function openSharedMediaSheet() {
   });
 }
 
+async function openDmProfileSheet(userId, initialTab = "info") {
+  const user = state.users.find((item) => item.id === userId);
+  if (!user) {
+    throw new Error("Пользователь не найден");
+  }
+
+  renderSheetLoading(user.displayName, 5);
+  const data = await api(`/api/media/shared?scope=dm&targetId=${userId}&limit=80`);
+  const media = data.media || [];
+  const files = data.files || [];
+  const links = data.links || [];
+
+  const mediaHtml = media.length
+    ? `<div class="shared-grid">${media
+        .map((item) => `<button type="button" class="shared-media-card image" data-open-image="${escapeHtml(item.imageUrl)}"><img src="${escapeHtml(item.imageUrl)}" alt="image" /><span class="msg-time">${formatTime(item.createdAt)}</span></button>`)
+        .join("")}</div>`
+    : `<div class="settings-empty"><strong>Пусто</strong><p class="msg-time">Изображений пока нет</p></div>`;
+
+  const linksHtml = links.length
+    ? `<div class="menu-contacts search-results-list">${links.map((item) => `<a class="menu-contact-item settings-contact-card" href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer"><div><strong>${escapeHtml(item.url)}</strong><p class="msg-time">Сообщение #${item.id} · ${formatTime(item.createdAt)}</p></div><span class="menu-badge">→</span></a>`).join("")}</div>`
+    : `<div class="settings-empty"><strong>Пусто</strong><p class="msg-time">Ссылок пока нет</p></div>`;
+  const filesHtml = files.length
+    ? `<div class="menu-contacts search-results-list">${files.map((item) => `<a class="menu-contact-item settings-contact-card" href="${escapeHtml(item.fileUrl)}" target="_blank" rel="noopener noreferrer"><div><strong>${escapeHtml(item.fileName || "Файл")}</strong><p class="msg-time">${escapeHtml(formatFileSize(item.fileSize) || "Документ")} · ${formatTime(item.createdAt)}</p></div><span class="menu-badge">→</span></a>`).join("")}</div>`
+    : `<div class="settings-empty"><strong>Пусто</strong><p class="msg-time">Файлов пока нет</p></div>`;
+
+  const statusLabel = state.onlineIds.has(user.id) ? "В сети" : formatLastSeen(user.lastSeenAt);
+
+  openSheet(
+    user.displayName,
+    "",
+    `
+      <div class="stack settings-layout room-profile-layout">
+        <section class="settings-hero room-profile-hero">
+          <div class="profile-hero-main">
+            <div class="avatar profile-hero-avatar">${avatarMarkup(user)}</div>
+            <div>
+              <strong>${escapeHtml(user.displayName)}</strong>
+              <p class="msg-time">@${escapeHtml(user.username)}${user.isAdmin ? " · admin" : ""}</p>
+              <p class="msg-time">${statusLabel}</p>
+            </div>
+          </div>
+        </section>
+        <section class="settings-card">
+          <div class="segmented compact room-profile-tabs">
+            <button class="seg-btn ${initialTab === "info" ? "active" : ""}" data-dm-profile-tab="info" type="button">Инфо</button>
+            <button class="seg-btn ${initialTab === "media" ? "active" : ""}" data-dm-profile-tab="media" type="button">Медиа</button>
+            <button class="seg-btn ${initialTab === "links" ? "active" : ""}" data-dm-profile-tab="links" type="button">Ссылки</button>
+            <button class="seg-btn ${initialTab === "files" ? "active" : ""}" data-dm-profile-tab="files" type="button">Файлы</button>
+          </div>
+        </section>
+        <section class="settings-card room-profile-panel ${initialTab === "info" ? "" : "hidden"}" data-dm-profile-panel="info">
+          <div class="settings-card-head"><div><strong>О пользователе</strong><p class="msg-time">Основная информация о собеседнике.</p></div></div>
+          <div class="settings-meta-grid">
+            <div class="settings-pill">Диалог</div>
+            <div class="settings-pill ${state.onlineIds.has(user.id) ? "" : "disabled"}">${state.onlineIds.has(user.id) ? "online" : "offline"}</div>
+            ${user.isAdmin ? `<div class="settings-pill">admin</div>` : ""}
+          </div>
+          <div class="settings-actions-row">
+            <button type="button" class="ghost" data-dm-open-search>Поиск</button>
+            <button type="button" class="ghost" data-dm-open-media>Медиа</button>
+            <button type="button" class="ghost danger" data-dm-clear>Очистить</button>
+          </div>
+          <div class="settings-empty room-link-box">
+            <strong>Статус</strong>
+            <p class="msg-time">${statusLabel}</p>
+          </div>
+        </section>
+        <section class="settings-card room-profile-panel ${initialTab === "media" ? "" : "hidden"}" data-dm-profile-panel="media">
+          <div class="settings-card-head"><div><strong>Медиа</strong><p class="msg-time">Все изображения из этого диалога.</p></div></div>
+          ${mediaHtml}
+        </section>
+        <section class="settings-card room-profile-panel ${initialTab === "links" ? "" : "hidden"}" data-dm-profile-panel="links">
+          <div class="settings-card-head"><div><strong>Ссылки</strong><p class="msg-time">Все ссылки, отправленные в этом диалоге.</p></div></div>
+          ${linksHtml}
+        </section>
+        <section class="settings-card room-profile-panel ${initialTab === "files" ? "" : "hidden"}" data-dm-profile-panel="files">
+          <div class="settings-card-head"><div><strong>Файлы</strong><p class="msg-time">Все документы и вложения из этого диалога.</p></div></div>
+          ${filesHtml}
+        </section>
+      </div>
+    `,
+    async () => {}
+  );
+
+  els.sheetBody.querySelectorAll("[data-dm-profile-tab]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const tab = button.dataset.dmProfileTab;
+      els.sheetBody.querySelectorAll("[data-dm-profile-tab]").forEach((item) => {
+        item.classList.toggle("active", item.dataset.dmProfileTab === tab);
+      });
+      els.sheetBody.querySelectorAll("[data-dm-profile-panel]").forEach((panel) => {
+        panel.classList.toggle("hidden", panel.dataset.dmProfilePanel !== tab);
+      });
+    });
+  });
+
+  els.sheetBody.querySelectorAll("[data-open-image]").forEach((button) => {
+    button.addEventListener("click", () => openImageViewer(button.dataset.openImage || ""));
+  });
+
+  els.sheetBody.querySelector("[data-dm-open-search]")?.addEventListener("click", async () => {
+    await openSearchMessagesSheet();
+  });
+  els.sheetBody.querySelector("[data-dm-open-media]")?.addEventListener("click", () => {
+    els.sheetBody.querySelectorAll("[data-dm-profile-tab]").forEach((item) => {
+      item.classList.toggle("active", item.dataset.dmProfileTab === "media");
+    });
+    els.sheetBody.querySelectorAll("[data-dm-profile-panel]").forEach((panel) => {
+      panel.classList.toggle("hidden", panel.dataset.dmProfilePanel !== "media");
+    });
+  });
+  els.sheetBody.querySelector("[data-dm-clear]")?.addEventListener("click", async () => {
+    await clearDialogWithUser(user.id);
+    closeSheet();
+  });
+}
+
 function connectSocket() {
   if (state.socket) {
     state.socket.disconnect();
@@ -4262,23 +4862,13 @@ function buildChatHeaderContextItems() {
     const room = state.rooms.find((item) => item.id === state.selected.id);
     if (room?.joined) {
       items.push({ label: "Поиск по сообщениям", onClick: async () => openSearchMessagesSheet() });
-      items.push({ label: "Медиа и ссылки", onClick: async () => openSharedMediaSheet() });
     }
     const canDeleteRoom = state.me?.isAdmin || room?.createdBy === state.me?.id || room?.canOwn;
-    if (room?.joined && room?.canManage) {
-      items.push({
-        label: "Управление комнатой",
-        onClick: async () => {
-          openRoomMembersSheet(state.selected.id);
-        },
-      });
-    }
     if (canDeleteRoom) {
       items.push({ label: "Удалить комнату", danger: true, onClick: async () => deleteRoom(state.selected.id) });
     }
   } else {
     items.push({ label: "Поиск по сообщениям", onClick: async () => openSearchMessagesSheet() });
-    items.push({ label: "Медиа и ссылки", onClick: async () => openSharedMediaSheet() });
     items.push({ label: "Очистить диалог", danger: true, onClick: async () => clearDialogWithUser(state.selected.id) });
   }
 
@@ -4348,6 +4938,14 @@ els.composeMetaCancel.addEventListener("click", () => clearReply());
 els.reloadAppBtn?.addEventListener("click", () => {
   window.location.reload();
 });
+els.selectionCopyBtn?.addEventListener("click", async () => {
+  await copySelectedMessages();
+});
+els.selectionClearBtn?.addEventListener("click", () => clearMessageSelection());
+els.selectionForwardBtn?.addEventListener("click", () => openForwardSheet([]));
+els.selectionDeleteBtn?.addEventListener("click", async () => {
+  await deleteSelectedMessages();
+});
 
 els.composeMetaText.addEventListener("click", async () => {
   const id = Number(els.composeMetaText.dataset.replyMsgId || 0);
@@ -4372,6 +4970,11 @@ els.imageBtn.addEventListener("click", () => {
   els.imageInput.click();
 });
 
+els.fileBtn?.addEventListener("click", () => {
+  els.attachMenu.classList.add("hidden");
+  els.fileInput.click();
+});
+
 els.imageInput.addEventListener("change", async () => {
   const file = els.imageInput.files?.[0];
   if (!file) {
@@ -4384,6 +4987,27 @@ els.imageInput.addEventListener("change", async () => {
     alert(error.message);
   } finally {
     els.imageInput.value = "";
+  }
+});
+
+els.fileInput?.addEventListener("change", async () => {
+  const file = els.fileInput.files?.[0];
+  if (!file) {
+    return;
+  }
+  try {
+    if (file.size > 25 * 1024 * 1024) {
+      throw new Error("Файл слишком большой. Максимум 25 MB");
+    }
+    await sendFileMessage(file);
+    renderMessages({ forceBottom: true });
+    scrollMessagesToBottom(true);
+    showToast("Файл отправлен", "success");
+  } catch (error) {
+    setUploadProgress(0);
+    alert(error.message);
+  } finally {
+    els.fileInput.value = "";
   }
 });
 
@@ -4520,13 +5144,33 @@ window.addEventListener("resize", hideContextMenu);
 window.addEventListener("resize", refreshStickyDayLabel);
 window.addEventListener("scroll", hideContextMenu, true);
 
+els.chatHeadMain?.addEventListener("click", async () => {
+  if (state.selected?.type === "room") {
+    await openRoomProfileSheet(state.selected.id);
+    return;
+  }
+  if (state.selected?.type === "dm") {
+    await openDmProfileSheet(state.selected.id);
+  }
+});
+
 fillEmojiPanel();
 applyTheme(state.theme);
 setMode("login");
 refreshListFiltersUI();
+loadPublicRoomPreviewIfNeeded().catch(() => {});
 
-if (state.token) {
-  startSession().catch(() => resetSession());
-} else {
-  showAuth();
-}
+fetch("/api/auth/refresh", { method: "POST", credentials: "same-origin" })
+  .then((response) => response.json().then((data) => ({ response, data })))
+  .then(async ({ response, data }) => {
+    if (!response.ok || !data.token) {
+      showAuth();
+      return;
+    }
+    setToken(data.token);
+    if (data.user) {
+      state.me = data.user;
+    }
+    await startSession();
+  })
+  .catch(() => showAuth());
