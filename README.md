@@ -92,6 +92,12 @@ Copy `.env.example` and adjust values.
 - `WEB_PUSH_PRIVATE_KEY` - optional web-push private key
 - `WEB_PUSH_SUBJECT` - contact for VAPID, e.g. `mailto:admin@example.com`
 
+Production security notes:
+
+- `CORS_ORIGIN` must be set in production
+- uploaded images and supported document types are checked by MIME and file signature
+- files are served as attachments from `/uploads/files`
+
 ## Deploy Anywhere
 
 Full migration guide: `DEPLOY.md`

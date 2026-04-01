@@ -154,7 +154,11 @@ async function initDb() {
   `);
 
   await ensureColumn("room_members", "role", "TEXT NOT NULL DEFAULT 'member'");
+  await ensureColumn("room_members", "is_muted", "INTEGER NOT NULL DEFAULT 0");
+  await ensureColumn("room_members", "can_post_media", "INTEGER NOT NULL DEFAULT 1");
   await run("UPDATE room_members SET role = 'member' WHERE role IS NULL OR role = ''");
+  await run("UPDATE room_members SET is_muted = 0 WHERE is_muted IS NULL");
+  await run("UPDATE room_members SET can_post_media = 1 WHERE can_post_media IS NULL");
   await run(
     "INSERT OR IGNORE INTO room_members (room_id, user_id, role) SELECT id, created_by, 'owner' FROM chat_rooms WHERE created_by IS NOT NULL"
   );
@@ -178,6 +182,20 @@ async function initDb() {
 
   await ensureColumn("room_invitations", "invited_by", "INTEGER DEFAULT NULL");
   await ensureColumn("room_invitations", "accepted_at", "TEXT DEFAULT NULL");
+
+  await run(`
+    CREATE TABLE IF NOT EXISTS room_bans (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      room_id INTEGER NOT NULL,
+      user_id INTEGER NOT NULL,
+      banned_by INTEGER NOT NULL,
+      created_at TEXT DEFAULT (datetime('now')),
+      UNIQUE(room_id, user_id),
+      FOREIGN KEY(room_id) REFERENCES chat_rooms(id),
+      FOREIGN KEY(user_id) REFERENCES users(id),
+      FOREIGN KEY(banned_by) REFERENCES users(id)
+    )
+  `);
 
   await run(`
     CREATE TABLE IF NOT EXISTS room_messages (

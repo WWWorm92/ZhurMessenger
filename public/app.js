@@ -2398,8 +2398,7 @@ async function openRoomMembersSheet(roomId) {
             <p class="msg-time">@${escapeHtml(user.username)} ${user.online ? "· онлайн" : "· офлайн"}</p>
           </div>
           <div class="member-actions">
-            ${canOwn && user.id !== state.me?.id && user.role !== "owner" ? `<button type="button" class="ghost compact-btn" data-room-role-user="${user.id}" data-room-role-next="${user.role === "admin" ? "member" : "admin"}">${user.role === "admin" ? "Снять админа" : "Сделать админом"}</button>` : ""}
-            ${canManage && user.id !== state.me?.id && user.role !== "owner" ? `<button type="button" class="ghost danger compact-btn" data-room-remove-member="${user.id}">Удалить</button>` : ""}
+            ${canManage && user.id !== state.me?.id && user.role !== "owner" ? `<button type="button" class="chat-more-btn member-menu-btn" data-room-member-menu="${user.id}">${iconMarkup("more", "xs")}</button>` : ""}
           </div>
         </div>
       `
@@ -2477,39 +2476,74 @@ async function openRoomMembersSheet(roomId) {
     }
   });
 
-  els.sheetBody.querySelectorAll("[data-room-remove-member]").forEach((button) => {
-    button.addEventListener("click", async () => {
-      const userId = Number(button.dataset.roomRemoveMember);
-      try {
-        await api(`/api/rooms/${roomId}/members/${userId}`, { method: "DELETE" });
-        await Promise.all([loadRooms(), loadInvitations()]);
-        refreshInvitationsButton();
-        renderEntityList();
-        updateChatHeader();
-        await openRoomMembersSheet(roomId);
-      } catch (error) {
-        alert(error.message);
-      }
-    });
-  });
+  async function refreshManagedRoomSheet() {
+    await Promise.all([loadRooms(), loadInvitations()]);
+    refreshInvitationsButton();
+    renderEntityList();
+    updateChatHeader();
+    await openRoomMembersSheet(roomId);
+  }
 
-  els.sheetBody.querySelectorAll("[data-room-role-user]").forEach((button) => {
-    button.addEventListener("click", async () => {
-      const userId = Number(button.dataset.roomRoleUser);
-      const role = String(button.dataset.roomRoleNext || "member");
-      try {
-        await api(`/api/rooms/${roomId}/members/${userId}`, {
-          method: "PATCH",
-          body: JSON.stringify({ role }),
+  els.sheetBody.querySelectorAll("[data-room-member-menu]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      const userId = Number(button.dataset.roomMemberMenu);
+      const member = members.find((item) => item.id === userId);
+      if (!member) return;
+      const items = [];
+      if (canOwn && member.role !== "owner") {
+        items.push({
+          label: member.role === "admin" ? "Снять админа" : "Сделать админом",
+          onClick: async () => {
+            await api(`/api/rooms/${roomId}/members/${userId}`, {
+              method: "PATCH",
+              body: JSON.stringify({ role: member.role === "admin" ? "member" : "admin" }),
+            });
+            await refreshManagedRoomSheet();
+          },
         });
-        await Promise.all([loadRooms(), loadInvitations()]);
-        refreshInvitationsButton();
-        renderEntityList();
-        updateChatHeader();
-        await openRoomMembersSheet(roomId);
-      } catch (error) {
-        alert(error.message);
       }
+      items.push({
+        label: member.isMuted ? "Снять mute" : "Mute",
+        onClick: async () => {
+          await api(`/api/rooms/${roomId}/members/${userId}`, {
+            method: "PATCH",
+            body: JSON.stringify({ isMuted: !member.isMuted }),
+          });
+          await refreshManagedRoomSheet();
+        },
+      });
+      items.push({
+        label: member.canPostMedia ? "Запретить медиа" : "Разрешить медиа",
+        onClick: async () => {
+          await api(`/api/rooms/${roomId}/members/${userId}`, {
+            method: "PATCH",
+            body: JSON.stringify({ canPostMedia: !member.canPostMedia }),
+          });
+          await refreshManagedRoomSheet();
+        },
+      });
+      items.push({
+        label: "Ban",
+        danger: true,
+        onClick: async () => {
+          await api(`/api/rooms/${roomId}/ban-user`, {
+            method: "POST",
+            body: JSON.stringify({ userId }),
+          });
+          await refreshManagedRoomSheet();
+        },
+      });
+      items.push({
+        label: "Удалить",
+        danger: true,
+        onClick: async () => {
+          await api(`/api/rooms/${roomId}/members/${userId}`, { method: "DELETE" });
+          await refreshManagedRoomSheet();
+        },
+      });
+      const rect = event.currentTarget.getBoundingClientRect();
+      showContextMenu(rect.right, rect.bottom + 6, items, { forceFloating: true });
     });
   });
 

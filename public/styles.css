@@ -543,6 +543,7 @@ button {
   display: grid;
   gap: 7px;
   overflow: auto;
+  align-content: start;
 }
 
 .chat-item {
@@ -1938,6 +1939,12 @@ button {
   justify-items: end;
 }
 
+.member-menu-btn {
+  width: 30px;
+  height: 30px;
+  border-radius: 10px;
+}
+
 .compact-btn {
   padding: 6px 8px;
   font-size: 12px;
@@ -1968,6 +1975,12 @@ button {
   border-color: rgba(104, 169, 227, 0.45);
   color: #2f5c86;
   background: rgba(225, 241, 255, 0.82);
+}
+
+.role-chip.member {
+  border-color: rgba(123, 154, 186, 0.28);
+  color: #65809a;
+  background: rgba(242, 247, 251, 0.82);
 }
 
 .menu-contact-item:hover {

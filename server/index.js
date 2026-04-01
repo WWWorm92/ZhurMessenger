@@ -573,6 +573,78 @@ function imageFilter(req, file, cb) {
   cb(null, true);
 }
 
+async function readFileHeader(filePath, bytes = 16) {
+  const handle = await fs.promises.open(filePath, "r");
+  try {
+    const buffer = Buffer.alloc(bytes);
+    const { bytesRead } = await handle.read(buffer, 0, bytes, 0);
+    return buffer.subarray(0, bytesRead);
+  } finally {
+    await handle.close();
+  }
+}
+
+function headerStartsWith(buffer, signature) {
+  return Buffer.isBuffer(buffer) && buffer.length >= signature.length && signature.every((byte, idx) => buffer[idx] === byte);
+}
+
+function looksLikeText(buffer) {
+  if (!Buffer.isBuffer(buffer) || !buffer.length) {
+    return false;
+  }
+  for (const byte of buffer) {
+    if (byte === 0) {
+      return false;
+    }
+  }
+  return true;
+}
+
+async function validateUploadedImage(filePath) {
+  const header = await readFileHeader(filePath, 12);
+  return (
+    headerStartsWith(header, [0xff, 0xd8, 0xff]) ||
+    headerStartsWith(header, [0x89, 0x50, 0x4e, 0x47]) ||
+    headerStartsWith(header, [0x47, 0x49, 0x46, 0x38]) ||
+    (header.length >= 12 && header.toString("ascii", 0, 4) === "RIFF" && header.toString("ascii", 8, 12) === "WEBP")
+  );
+}
+
+async function validateUploadedDocument(filePath, originalName) {
+  const ext = path.extname(String(originalName || "")).toLowerCase();
+  const header = await readFileHeader(filePath, 16);
+  if ([".txt", ".csv"].includes(ext)) {
+    return looksLikeText(header);
+  }
+  if (ext === ".pdf") {
+    return headerStartsWith(header, [0x25, 0x50, 0x44, 0x46]);
+  }
+  if ([".doc", ".xls"].includes(ext)) {
+    return headerStartsWith(header, [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]);
+  }
+  if ([".docx", ".xlsx", ".zip"].includes(ext)) {
+    return headerStartsWith(header, [0x50, 0x4b, 0x03, 0x04]);
+  }
+  if (ext === ".7z") {
+    return headerStartsWith(header, [0x37, 0x7a, 0xbc, 0xaf, 0x27, 0x1c]);
+  }
+  if (ext === ".rar") {
+    return headerStartsWith(header, [0x52, 0x61, 0x72, 0x21, 0x1a, 0x07]);
+  }
+  return false;
+}
+
+async function removeFileIfExists(filePath) {
+  if (!filePath) {
+    return;
+  }
+  try {
+    await fs.promises.unlink(filePath);
+  } catch {
+    // ignore cleanup failures
+  }
+}
+
 const ALLOWED_FILE_EXTENSIONS = new Set([".pdf", ".txt", ".doc", ".docx", ".xls", ".xlsx", ".csv", ".zip", ".7z", ".rar"]);
 const ALLOWED_FILE_MIME_PREFIXES = [
   "application/pdf",
@@ -647,7 +719,7 @@ async function getRoomMemberIds(roomId) {
 async function getRoomForUser(userId, roomId) {
   return get(
     `
-    SELECT r.id, r.name, r.access_type, r.created_by, r.created_at, r.avatar_url, r.description, r.slug, r.who_can_post, r.who_can_invite, m.role AS my_role
+    SELECT r.id, r.name, r.access_type, r.created_by, r.created_at, r.avatar_url, r.description, r.slug, r.who_can_post, r.who_can_invite, m.role AS my_role, m.is_muted AS my_muted, m.can_post_media AS my_can_post_media
     FROM chat_rooms r
     JOIN room_members m ON m.room_id = r.id
     WHERE r.id = ? AND m.user_id = ?
@@ -791,6 +863,8 @@ function roomPayload(room, joined) {
     description: room.description || "",
     slug: room.slug || "",
     myRole: room.my_role || null,
+    myMuted: Boolean(room.my_muted),
+    myCanPostMedia: room.my_can_post_media === undefined ? true : Boolean(room.my_can_post_media),
     whoCanPost: room.who_can_post || "members",
     whoCanInvite: room.who_can_invite || "admins",
   };
@@ -836,6 +910,19 @@ function canInviteToRoom(me, room, myRole = null) {
     return Boolean(myRole);
   }
   return myRole === "owner" || myRole === "admin";
+}
+
+function canModerateRoomTarget(me, room, myRole = null, targetRole = "member") {
+  if (me?.is_admin) {
+    return true;
+  }
+  if (myRole === "owner") {
+    return targetRole !== "owner";
+  }
+  if (myRole === "admin") {
+    return targetRole === "member";
+  }
+  return false;
 }
 
 async function appendRoomAudit(roomId, actorUserId, action, { targetUserId = null, payload = null } = {}) {
@@ -1381,6 +1468,11 @@ app.post(
         res.status(400).json({ error: "Avatar file required" });
         return;
       }
+      if (!(await validateUploadedImage(req.file.path))) {
+        await removeFileIfExists(req.file.path);
+        res.status(400).json({ error: "Invalid image signature" });
+        return;
+      }
 
       const avatarPath = publicFilePath("avatars", req.file.filename);
       await run("UPDATE users SET avatar_url = ? WHERE id = ?", [avatarPath, req.user.id]);
@@ -1404,6 +1496,11 @@ app.post(
         res.status(400).json({ error: "Avatar file is required" });
         return;
       }
+      if (!(await validateUploadedImage(req.file.path))) {
+        await removeFileIfExists(req.file.path);
+        res.status(400).json({ error: "Invalid image signature" });
+        return;
+      }
       res.status(201).json({
         avatarUrl: publicFilePath("rooms", req.file.filename),
       });
@@ -1423,6 +1520,11 @@ app.post(
       res.status(400).json({ error: "Image file required" });
       return;
     }
+    if (!(await validateUploadedImage(req.file.path))) {
+      await removeFileIfExists(req.file.path);
+      res.status(400).json({ error: "Invalid image signature" });
+      return;
+    }
 
     const imageUrl = publicFilePath("messages", req.file.filename);
     res.json({ imageUrl });
@@ -1438,6 +1540,11 @@ app.post(
     try {
       if (!req.file) {
         res.status(400).json({ error: "File required" });
+        return;
+      }
+      if (!(await validateUploadedDocument(req.file.path, req.file.originalname))) {
+        await removeFileIfExists(req.file.path);
+        res.status(400).json({ error: "Invalid file signature" });
         return;
       }
       res.status(201).json({
@@ -2290,6 +2397,12 @@ app.post("/api/rooms/:roomId/join", authMiddleware, async (req, res) => {
       return;
     }
 
+    const banned = await get("SELECT 1 FROM room_bans WHERE room_id = ? AND user_id = ?", [roomId, req.user.id]);
+    if (banned && room.created_by !== req.user.id) {
+      res.status(403).json({ error: "You are banned from this room" });
+      return;
+    }
+
     if (room.access_type === "private") {
       const isInvited = await get(
         "SELECT 1 FROM room_invitations WHERE room_id = ? AND user_id = ?",
@@ -2649,7 +2762,7 @@ app.get("/api/rooms/:roomId", authMiddleware, async (req, res) => {
     const canInvite = canInviteToRoom(me, room, myRole);
 
     const members = await all(
-      "SELECT u.id, u.username, u.display_name, u.avatar_url, u.is_admin, rm.role FROM room_members rm JOIN users u ON u.id = rm.user_id WHERE rm.room_id = ?",
+      "SELECT u.id, u.username, u.display_name, u.avatar_url, u.is_admin, rm.role, rm.is_muted, rm.can_post_media FROM room_members rm JOIN users u ON u.id = rm.user_id WHERE rm.room_id = ?",
       [roomId]
     );
     const online = new Set(onlineUserIds());
@@ -2668,6 +2781,8 @@ app.get("/api/rooms/:roomId", authMiddleware, async (req, res) => {
         avatarUrl: m.avatar_url || "",
         isAdmin: Boolean(m.is_admin),
         role: m.role || "member",
+        isMuted: Boolean(m.is_muted),
+        canPostMedia: Boolean(m.can_post_media),
         online: online.has(m.id),
       })),
     });
@@ -2953,9 +3068,15 @@ app.patch("/api/rooms/:roomId/members/:userId", authMiddleware, async (req, res)
   try {
     const roomId = mustBeValidId(req.params.roomId);
     const userId = mustBeValidId(req.params.userId);
-    const nextRole = String(req.body.role || "").toLowerCase();
-    if (!roomId || !userId || !["member", "admin"].includes(nextRole)) {
+    const nextRole = req.body.role !== undefined ? String(req.body.role || "").toLowerCase() : null;
+    const nextMuted = req.body.isMuted !== undefined ? Boolean(req.body.isMuted) : null;
+    const nextCanPostMedia = req.body.canPostMedia !== undefined ? Boolean(req.body.canPostMedia) : null;
+    if (!roomId || !userId || (nextRole === null && nextMuted === null && nextCanPostMedia === null)) {
       res.status(400).json({ error: "Invalid payload" });
+      return;
+    }
+    if (nextRole !== null && !["member", "admin"].includes(nextRole)) {
+      res.status(400).json({ error: "Invalid role" });
       return;
     }
 
@@ -2970,17 +3091,8 @@ app.patch("/api/rooms/:roomId/members/:userId", authMiddleware, async (req, res)
       roomId,
       req.user.id,
     ]);
-    if (!canOwnRoom(me, room, myMembership?.role || null)) {
-      res.status(403).json({ error: "Only room owner or admin can change roles" });
-      return;
-    }
-
-    if (room.created_by === userId) {
-      res.status(400).json({ error: "Room owner role cannot be changed" });
-      return;
-    }
-
-    const target = await get("SELECT role FROM room_members WHERE room_id = ? AND user_id = ?", [
+    const myRole = myMembership?.role || null;
+    const target = await get("SELECT role, is_muted, can_post_media FROM room_members WHERE room_id = ? AND user_id = ?", [
       roomId,
       userId,
     ]);
@@ -2989,14 +3101,28 @@ app.patch("/api/rooms/:roomId/members/:userId", authMiddleware, async (req, res)
       return;
     }
 
-    await run("UPDATE room_members SET role = ? WHERE room_id = ? AND user_id = ?", [
-      nextRole,
-      roomId,
-      userId,
-    ]);
-    await appendRoomAudit(roomId, req.user.id, "member_role_changed", {
+    if (nextRole !== null && !canOwnRoom(me, room, myRole)) {
+      res.status(403).json({ error: "Only room owner or admin can change roles" });
+      return;
+    }
+
+    if ((nextRole !== null || nextMuted !== null || nextCanPostMedia !== null) && !canModerateRoomTarget(me, room, myRole, target.role || "member")) {
+      res.status(403).json({ error: "Insufficient permissions for this user" });
+      return;
+    }
+
+    if (room.created_by === userId) {
+      res.status(400).json({ error: "Room owner role cannot be changed" });
+      return;
+    }
+
+    await run(
+      "UPDATE room_members SET role = COALESCE(?, role), is_muted = COALESCE(?, is_muted), can_post_media = COALESCE(?, can_post_media) WHERE room_id = ? AND user_id = ?",
+      [nextRole, nextMuted === null ? null : (nextMuted ? 1 : 0), nextCanPostMedia === null ? null : (nextCanPostMedia ? 1 : 0), roomId, userId]
+    );
+    await appendRoomAudit(roomId, req.user.id, "member_restrictions_changed", {
       targetUserId: userId,
-      payload: { role: nextRole },
+      payload: { role: nextRole, isMuted: nextMuted, canPostMedia: nextCanPostMedia },
     });
     io.emit("rooms:update");
     res.json({ ok: true });
@@ -3038,6 +3164,70 @@ app.post("/api/rooms/:roomId/leave", authMiddleware, async (req, res) => {
       targetUserId: req.user.id,
     });
     io.emit("rooms:update");
+    res.json({ ok: true });
+  } catch (error) {
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+app.post("/api/rooms/:roomId/ban-user", authMiddleware, async (req, res) => {
+  try {
+    const roomId = mustBeValidId(req.params.roomId);
+    const userId = mustBeValidId(req.body.userId);
+    if (!roomId || !userId) {
+      res.status(400).json({ error: "Invalid room or user id" });
+      return;
+    }
+    const room = await get("SELECT * FROM chat_rooms WHERE id = ?", [roomId]);
+    if (!room) {
+      res.status(404).json({ error: "Room not found" });
+      return;
+    }
+    const me = await get("SELECT id, is_admin FROM users WHERE id = ?", [req.user.id]);
+    const myMembership = await get("SELECT role FROM room_members WHERE room_id = ? AND user_id = ?", [roomId, req.user.id]);
+    const targetMembership = await get("SELECT role FROM room_members WHERE room_id = ? AND user_id = ?", [roomId, userId]);
+    if (!canModerateRoomTarget(me, room, myMembership?.role || null, targetMembership?.role || "member")) {
+      res.status(403).json({ error: "Insufficient permissions for this user" });
+      return;
+    }
+    if (room.created_by === userId) {
+      res.status(400).json({ error: "Room owner cannot be banned" });
+      return;
+    }
+    await run(
+      "INSERT INTO room_bans (room_id, user_id, banned_by, created_at) VALUES (?, ?, ?, datetime('now')) ON CONFLICT(room_id, user_id) DO UPDATE SET banned_by = excluded.banned_by, created_at = datetime('now')",
+      [roomId, userId, req.user.id]
+    );
+    await run("DELETE FROM room_members WHERE room_id = ? AND user_id = ?", [roomId, userId]);
+    await appendRoomAudit(roomId, req.user.id, "member_banned", { targetUserId: userId });
+    io.emit("rooms:update");
+    res.json({ ok: true });
+  } catch (error) {
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+app.delete("/api/rooms/:roomId/bans/:userId", authMiddleware, async (req, res) => {
+  try {
+    const roomId = mustBeValidId(req.params.roomId);
+    const userId = mustBeValidId(req.params.userId);
+    if (!roomId || !userId) {
+      res.status(400).json({ error: "Invalid room or user id" });
+      return;
+    }
+    const room = await get("SELECT * FROM chat_rooms WHERE id = ?", [roomId]);
+    if (!room) {
+      res.status(404).json({ error: "Room not found" });
+      return;
+    }
+    const me = await get("SELECT id, is_admin FROM users WHERE id = ?", [req.user.id]);
+    const myMembership = await get("SELECT role FROM room_members WHERE room_id = ? AND user_id = ?", [roomId, req.user.id]);
+    if (!canManageRoom(me, room, myMembership?.role || null)) {
+      res.status(403).json({ error: "Only room admins can manage bans" });
+      return;
+    }
+    await run("DELETE FROM room_bans WHERE room_id = ? AND user_id = ?", [roomId, userId]);
+    await appendRoomAudit(roomId, req.user.id, "member_unbanned", { targetUserId: userId });
     res.json({ ok: true });
   } catch (error) {
     res.status(500).json({ error: "Internal server error" });
@@ -3145,6 +3335,10 @@ app.get("/api/rooms/:roomId/messages", authMiddleware, async (req, res) => {
       res.status(403).json({ error: "You do not have permission to post in this room" });
       return;
     }
+    if (room.my_muted) {
+      res.status(403).json({ error: "You are muted in this room" });
+      return;
+    }
 
     const beforeId = mustBeValidId(req.query.beforeId);
     const limit = parseLimit(req.query.limit, 60, 200);
@@ -3250,8 +3444,16 @@ app.post("/api/rooms/:roomId/messages", authMiddleware, messageRateLimit, async 
       pollId = await createPollFromInput(req.user.id, pollInput);
       messageType = "poll";
     } else if (imageUrl) {
+      if (room.my_can_post_media === 0) {
+        res.status(403).json({ error: "You cannot post media in this room" });
+        return;
+      }
       messageType = "image";
     } else if (fileUrl) {
+      if (room.my_can_post_media === 0) {
+        res.status(403).json({ error: "You cannot post files in this room" });
+        return;
+      }
       messageType = "file";
     }
 
