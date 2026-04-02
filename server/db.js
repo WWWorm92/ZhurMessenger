@@ -184,6 +184,18 @@ async function initDb() {
   await ensureColumn("room_invitations", "accepted_at", "TEXT DEFAULT NULL");
 
   await run(`
+    CREATE TABLE IF NOT EXISTS room_join_requests (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      room_id INTEGER NOT NULL,
+      user_id INTEGER NOT NULL,
+      created_at TEXT DEFAULT (datetime('now')),
+      UNIQUE(room_id, user_id),
+      FOREIGN KEY(room_id) REFERENCES chat_rooms(id),
+      FOREIGN KEY(user_id) REFERENCES users(id)
+    )
+  `);
+
+  await run(`
     CREATE TABLE IF NOT EXISTS room_bans (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       room_id INTEGER NOT NULL,

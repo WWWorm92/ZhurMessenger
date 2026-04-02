@@ -2266,7 +2266,12 @@ app.get("/api/rooms", authMiddleware, async (req, res) => {
           SELECT 1
           FROM room_invitations inv
           WHERE inv.room_id = r.id AND inv.user_id = ?
-        ) AS has_invitation
+        ) AS has_invitation,
+        EXISTS(
+          SELECT 1
+          FROM room_join_requests reqs
+          WHERE reqs.room_id = r.id AND reqs.user_id = ?
+        ) AS has_join_request
       FROM chat_rooms r
       LEFT JOIN room_members m ON m.room_id = r.id
       WHERE r.access_type = 'public'
@@ -2276,15 +2281,20 @@ app.get("/api/rooms", authMiddleware, async (req, res) => {
            WHERE own.room_id = r.id AND own.user_id = ?
          )
          OR EXISTS(
-           SELECT 1
-           FROM room_invitations inv
-           WHERE inv.room_id = r.id AND inv.user_id = ?
+            SELECT 1
+            FROM room_invitations inv
+            WHERE inv.room_id = r.id AND inv.user_id = ?
+          )
+         OR EXISTS(
+            SELECT 1
+            FROM room_join_requests reqs
+            WHERE reqs.room_id = r.id AND reqs.user_id = ?
          )
          OR ? = 1
       GROUP BY r.id
       ORDER BY r.created_at ASC
       `,
-      [req.user.id, req.user.id, req.user.id, req.user.id, req.user.id, me?.is_admin ? 1 : 0]
+      [req.user.id, req.user.id, req.user.id, req.user.id, req.user.id, req.user.id, req.user.id, me?.is_admin ? 1 : 0]
     );
 
     const unreadMap = await getRoomUnreadMap(req.user.id);
@@ -2294,6 +2304,7 @@ app.get("/api/rooms", authMiddleware, async (req, res) => {
         ...roomPayload(room, Boolean(room.joined) || Boolean(me?.is_admin)),
         joined: Boolean(room.joined),
         hasInvitation: Boolean(room.has_invitation),
+        hasJoinRequest: Boolean(room.has_join_request),
         membersCount: Number(room.members_count),
         canManage: canManageRoom(me, room, room.my_role || null),
         canOwn: canOwnRoom(me, room, room.my_role || null),
@@ -2730,6 +2741,130 @@ app.post("/api/invitations/:invitationId/decline", authMiddleware, async (req, r
 
     await run("DELETE FROM room_invitations WHERE id = ?", [invitationId]);
     io.emit("rooms:update");
+    res.json({ ok: true });
+  } catch (error) {
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+app.post("/api/rooms/:roomId/request-join", authMiddleware, async (req, res) => {
+  try {
+    const roomId = mustBeValidId(req.params.roomId);
+    if (!roomId) {
+      res.status(400).json({ error: "Invalid room id" });
+      return;
+    }
+    const room = await get("SELECT * FROM chat_rooms WHERE id = ?", [roomId]);
+    if (!room) {
+      res.status(404).json({ error: "Room not found" });
+      return;
+    }
+    const member = await get("SELECT 1 FROM room_members WHERE room_id = ? AND user_id = ?", [roomId, req.user.id]);
+    if (member) {
+      res.status(400).json({ error: "Already in room" });
+      return;
+    }
+    const banned = await get("SELECT 1 FROM room_bans WHERE room_id = ? AND user_id = ?", [roomId, req.user.id]);
+    if (banned) {
+      res.status(403).json({ error: "You are banned from this room" });
+      return;
+    }
+    await run(
+      "INSERT INTO room_join_requests (room_id, user_id, created_at) VALUES (?, ?, datetime('now')) ON CONFLICT(room_id, user_id) DO NOTHING",
+      [roomId, req.user.id]
+    );
+    await appendRoomAudit(roomId, req.user.id, "join_requested", { targetUserId: req.user.id });
+    io.emit("rooms:update");
+    res.json({ ok: true });
+  } catch (error) {
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+app.get("/api/rooms/:roomId/requests", authMiddleware, async (req, res) => {
+  try {
+    const roomId = mustBeValidId(req.params.roomId);
+    if (!roomId) {
+      res.status(400).json({ error: "Invalid room id" });
+      return;
+    }
+    const room = await get("SELECT * FROM chat_rooms WHERE id = ?", [roomId]);
+    if (!room) {
+      res.status(404).json({ error: "Room not found" });
+      return;
+    }
+    const me = await get("SELECT id, is_admin FROM users WHERE id = ?", [req.user.id]);
+    const myMembership = await get("SELECT role FROM room_members WHERE room_id = ? AND user_id = ?", [roomId, req.user.id]);
+    if (!canManageRoom(me, room, myMembership?.role || null)) {
+      res.status(403).json({ error: "Only room admins can view requests" });
+      return;
+    }
+    const rows = await all(
+      `
+      SELECT r.user_id, r.created_at, u.username, u.display_name, u.avatar_url
+      FROM room_join_requests r
+      JOIN users u ON u.id = r.user_id
+      WHERE r.room_id = ?
+      ORDER BY datetime(r.created_at) DESC
+      `,
+      [roomId]
+    );
+    res.json({
+      requests: rows.map((row) => ({
+        userId: row.user_id,
+        username: row.username,
+        displayName: row.display_name,
+        avatarUrl: row.avatar_url || "",
+        createdAt: row.created_at,
+      })),
+    });
+  } catch (error) {
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+app.post("/api/rooms/:roomId/requests/:userId/approve", authMiddleware, async (req, res) => {
+  try {
+    const roomId = mustBeValidId(req.params.roomId);
+    const userId = mustBeValidId(req.params.userId);
+    if (!roomId || !userId) {
+      res.status(400).json({ error: "Invalid room or user id" });
+      return;
+    }
+    const room = await get("SELECT * FROM chat_rooms WHERE id = ?", [roomId]);
+    const me = await get("SELECT id, is_admin FROM users WHERE id = ?", [req.user.id]);
+    const myMembership = await get("SELECT role FROM room_members WHERE room_id = ? AND user_id = ?", [roomId, req.user.id]);
+    if (!room || !canManageRoom(me, room, myMembership?.role || null)) {
+      res.status(403).json({ error: "Only room admins can manage requests" });
+      return;
+    }
+    await run("DELETE FROM room_join_requests WHERE room_id = ? AND user_id = ?", [roomId, userId]);
+    await run("INSERT OR IGNORE INTO room_members (room_id, user_id, role) VALUES (?, ?, 'member')", [roomId, userId]);
+    await appendRoomAudit(roomId, req.user.id, "join_request_approved", { targetUserId: userId });
+    io.emit("rooms:update");
+    res.json({ ok: true });
+  } catch (error) {
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+app.delete("/api/rooms/:roomId/requests/:userId", authMiddleware, async (req, res) => {
+  try {
+    const roomId = mustBeValidId(req.params.roomId);
+    const userId = mustBeValidId(req.params.userId);
+    if (!roomId || !userId) {
+      res.status(400).json({ error: "Invalid room or user id" });
+      return;
+    }
+    const room = await get("SELECT * FROM chat_rooms WHERE id = ?", [roomId]);
+    const me = await get("SELECT id, is_admin FROM users WHERE id = ?", [req.user.id]);
+    const myMembership = await get("SELECT role FROM room_members WHERE room_id = ? AND user_id = ?", [roomId, req.user.id]);
+    if (!room || !canManageRoom(me, room, myMembership?.role || null)) {
+      res.status(403).json({ error: "Only room admins can manage requests" });
+      return;
+    }
+    await run("DELETE FROM room_join_requests WHERE room_id = ? AND user_id = ?", [roomId, userId]);
+    await appendRoomAudit(roomId, req.user.id, "join_request_declined", { targetUserId: userId });
     res.json({ ok: true });
   } catch (error) {
     res.status(500).json({ error: "Internal server error" });
@@ -3229,6 +3364,58 @@ app.delete("/api/rooms/:roomId/bans/:userId", authMiddleware, async (req, res) =
     await run("DELETE FROM room_bans WHERE room_id = ? AND user_id = ?", [roomId, userId]);
     await appendRoomAudit(roomId, req.user.id, "member_unbanned", { targetUserId: userId });
     res.json({ ok: true });
+  } catch (error) {
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+app.get("/api/rooms/:roomId/bans", authMiddleware, async (req, res) => {
+  try {
+    const roomId = mustBeValidId(req.params.roomId);
+    if (!roomId) {
+      res.status(400).json({ error: "Invalid room id" });
+      return;
+    }
+    const room = await get("SELECT * FROM chat_rooms WHERE id = ?", [roomId]);
+    if (!room) {
+      res.status(404).json({ error: "Room not found" });
+      return;
+    }
+    const me = await get("SELECT id, is_admin FROM users WHERE id = ?", [req.user.id]);
+    const myMembership = await get("SELECT role FROM room_members WHERE room_id = ? AND user_id = ?", [roomId, req.user.id]);
+    if (!canManageRoom(me, room, myMembership?.role || null)) {
+      res.status(403).json({ error: "Only room admins can view bans" });
+      return;
+    }
+
+    const rows = await all(
+      `
+      SELECT
+        b.user_id,
+        b.created_at,
+        u.username,
+        u.display_name,
+        u.avatar_url,
+        actor.display_name AS banned_by_name
+      FROM room_bans b
+      JOIN users u ON u.id = b.user_id
+      LEFT JOIN users actor ON actor.id = b.banned_by
+      WHERE b.room_id = ?
+      ORDER BY datetime(b.created_at) DESC
+      `,
+      [roomId]
+    );
+
+    res.json({
+      bans: rows.map((row) => ({
+        userId: row.user_id,
+        username: row.username,
+        displayName: row.display_name,
+        avatarUrl: row.avatar_url || "",
+        bannedAt: row.created_at,
+        bannedByName: row.banned_by_name || "Система",
+      })),
+    });
   } catch (error) {
     res.status(500).json({ error: "Internal server error" });
   }

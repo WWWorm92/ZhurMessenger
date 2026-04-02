@@ -286,6 +286,23 @@ function roomRoleLabel(role) {
   return "member";
 }
 
+function memberStatusBadges(user) {
+  const badges = [];
+  if (user.role) {
+    badges.push(`<span class="role-chip ${escapeHtml(roomRoleLabel(user.role))}">${escapeHtml(roomRoleLabel(user.role))}</span>`);
+  }
+  if (user.isMuted) {
+    badges.push(`<span class="role-chip warning">muted</span>`);
+  }
+  if (user.canPostMedia === false) {
+    badges.push(`<span class="role-chip restricted">no media</span>`);
+  }
+  if (user.isAdmin) {
+    badges.push(`<span class="role-chip admin">system admin</span>`);
+  }
+  return badges.join("");
+}
+
 function formatTime(value) {
   const normalized = String(value || "").replace(" ", "T") + "Z";
   const date = new Date(normalized);
@@ -323,6 +340,13 @@ function formatLastSeen(value) {
     return `был(а) ${Math.max(1, Math.round(diff / minute))} мин назад`;
   }
   return `был(а) ${formatDateTime(value)}`;
+}
+
+function presenceLabel(user) {
+  if (!user) {
+    return "не в сети";
+  }
+  return user.online || state.onlineIds.has(user.id) ? "в сети" : formatLastSeen(user.lastSeenAt);
 }
 
 function formatDayLabel(value) {
@@ -1504,14 +1528,17 @@ function buildRoomContextItems(room) {
   });
   if (!room.joined && isPrivateRoom(room)) {
     items.push({
-      label: "Как войти",
-      onClick: async () =>
-        openSheet(
-          "Закрытая комната",
-          "Понятно",
-          "<p class='msg-time'>Вход только по приглашению от владельца комнаты или администратора.</p>",
-          async () => {}
-        ),
+      label: room.hasJoinRequest ? "Заявка отправлена" : "Запросить доступ",
+      onClick: async () => {
+        if (room.hasJoinRequest) {
+          showToast("Заявка уже отправлена", "info");
+          return;
+        }
+        await api(`/api/rooms/${room.id}/request-join`, { method: "POST" });
+        await loadRooms();
+        renderEntityList();
+        showToast("Заявка на вступление отправлена", "success");
+      },
     });
   }
   if (canDeleteRoom) {
@@ -1541,17 +1568,17 @@ function renderEntityList() {
       li.classList.toggle("active", state.selected?.type === "dm" && state.selected.id === user.id);
       const secondary = user.lastMessageAt
       ? `${user.lastMessageType === "image" ? `${iconMarkup("image", "inline-icon")}` : user.lastMessageType === "poll" ? `${iconMarkup("poll", "inline-icon")}` : user.lastMessageType === "file" ? `${iconMarkup("room", "inline-icon")}` : ""}${escapeHtml((user.lastMessageType === "file" ? (user.lastFileName || user.lastMessage) : user.lastMessage || "").slice(0, 52) || "[медиа]")}`
-        : `@${escapeHtml(user.username)} ${state.onlineIds.has(user.id) ? "· онлайн" : "· офлайн"}`;
+        : `@${escapeHtml(user.username)} · ${escapeHtml(presenceLabel(user))}`;
       li.innerHTML = `
         <div class="avatar">${avatarMarkup(user)}</div>
         <div class="chat-item-main">
           <div class="room-card-headline">
             <strong>${escapeHtml(user.displayName)}${user.isAdmin ? " 👑" : ""}</strong>
-            <span class="msg-time">${user.lastMessageAt ? formatTime(user.lastMessageAt) : state.onlineIds.has(user.id) ? "online" : "offline"}</span>
+            <span class="msg-time">${user.lastMessageAt ? formatTime(user.lastMessageAt) : presenceLabel(user)}</span>
           </div>
           <div class="room-card-badges">
             <span class="chat-item-badge dm">dialog</span>
-            ${state.onlineIds.has(user.id) ? `<span class="chat-item-badge online">online</span>` : ""}
+            ${state.onlineIds.has(user.id) ? `<span class="chat-item-badge online">online</span>` : `<span class="chat-item-badge dm">last seen</span>`}
             ${user.isAdmin ? `<span class="chat-item-badge manage">admin</span>` : ""}
           </div>
           <p>${secondary}</p>
@@ -1614,7 +1641,9 @@ function renderEntityList() {
         ? `Участников: ${room.membersCount}`
         : room.hasInvitation
           ? "Есть приглашение"
-          : "Запроси приглашение";
+          : room.hasJoinRequest
+            ? "Заявка отправлена"
+            : "Запроси приглашение";
     li.innerHTML = `
       <div class="avatar">${icon}</div>
       <div class="chat-item-main">
@@ -1624,7 +1653,7 @@ function renderEntityList() {
         </div>
         <div class="room-card-badges">
           <span class="chat-item-badge ${isPrivateRoom(room) ? "lock" : "public"}">${isPrivateRoom(room) ? "private" : "public"}</span>
-          ${room.hasInvitation ? `<span class="chat-item-badge invitation">invite</span>` : ""}
+          ${room.hasInvitation ? `<span class="chat-item-badge invitation">invite</span>` : room.hasJoinRequest ? `<span class="chat-item-badge invitation">requested</span>` : ""}
           ${room.canManage ? `<span class="chat-item-badge manage">manage</span>` : ""}
         </div>
         <p>${secondary}</p>
@@ -2293,9 +2322,14 @@ async function selectRoom(roomId) {
         } catch (error) {
           openSheet(
             "Закрытая комната",
-            "Понятно",
-            `<div class="stack"><p>Вход в эту комнату только по персональному приглашению.</p><p class="msg-time">Попроси владельца комнаты или администратора отправить приглашение.</p></div>`,
-            async () => {}
+            room.hasJoinRequest ? "" : "Отправить заявку",
+            `<div class="stack"><p>Вход в эту комнату только по персональному приглашению.</p><p class="msg-time">Попроси владельца комнаты или администратора отправить приглашение, либо отправь заявку на вступление.</p></div>`,
+            async () => {
+              await api(`/api/rooms/${roomId}/request-join`, { method: "POST" });
+              await loadRooms();
+              renderEntityList();
+              showToast("Заявка на вступление отправлена", "success");
+            }
           );
           return;
         }
@@ -2394,7 +2428,8 @@ async function openRoomMembersSheet(roomId) {
         <div class="menu-contact-item ${canManage && user.id !== state.me?.id && user.id !== room.createdBy ? "with-action" : ""}">
           <div class="avatar">${avatarMarkup(user)}</div>
           <div>
-            <strong>${escapeHtml(user.displayName)}${user.isAdmin ? " 👑" : ""} <span class="role-chip ${roomRoleLabel(user.role)}">${roomRoleLabel(user.role)}</span></strong>
+            <strong>${escapeHtml(user.displayName)}</strong>
+            <div class="member-badges-row">${memberStatusBadges(user)}</div>
             <p class="msg-time">@${escapeHtml(user.username)} ${user.online ? "· онлайн" : "· офлайн"}</p>
           </div>
           <div class="member-actions">
@@ -2618,6 +2653,10 @@ async function openRoomProfileSheet(roomId, initialTab = "info") {
   const files = mediaData.files || [];
   const links = mediaData.links || [];
   const members = detailData.members || [];
+  const bansData = canManage ? await api(`/api/rooms/${roomId}/bans`).catch(() => ({ bans: [] })) : { bans: [] };
+  const bans = bansData.bans || [];
+  const requestsData = canManage ? await api(`/api/rooms/${roomId}/requests`).catch(() => ({ requests: [] })) : { requests: [] };
+  const requests = requestsData.requests || [];
 
   const memberPreview = members.slice(0, 6);
   const membersHtml = memberPreview.length
@@ -2629,8 +2668,9 @@ async function openRoomProfileSheet(roomId, initialTab = "info") {
               <div>
                 <strong>${escapeHtml(member.displayName)}</strong>
                 <p class="msg-time">@${escapeHtml(member.username)}</p>
+                <div class="member-badges-row">${memberStatusBadges(member)}</div>
               </div>
-              ${member.role ? `<span class="role-chip ${escapeHtml(roomRoleLabel(member.role))}">${escapeHtml(roomRoleLabel(member.role))}</span>` : ""}
+              <span class="member-preview-arrow">${iconMarkup("arrowRight", "xs")}</span>
             </button>
           `
         )
@@ -2661,6 +2701,15 @@ async function openRoomProfileSheet(roomId, initialTab = "info") {
   const linksHtml = links.length
     ? `<div class="menu-contacts search-results-list">${links.map((item) => `<a class="menu-contact-item settings-contact-card" href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer"><div><strong>${escapeHtml(item.url)}</strong><p class="msg-time">Сообщение #${item.id} · ${formatTime(item.createdAt)}</p></div><span class="menu-badge">→</span></a>`).join("")}</div>`
     : `<div class="settings-empty"><strong>Пусто</strong><p class="msg-time">Ссылок пока нет</p></div>`;
+  const bansHtml = bans.length
+    ? `<div class="member-preview-list">${bans.map((user) => `<div class="member-preview-item banned"><div class="avatar small">${avatarMarkup(user)}</div><div><strong>${escapeHtml(user.displayName)}</strong><p class="msg-time">@${escapeHtml(user.username)} · ${escapeHtml(user.bannedByName)} · ${formatTime(user.bannedAt)}</p></div><button type="button" class="ghost compact-btn" data-room-unban-user="${user.userId}">Unban</button></div>`).join("")}</div>`
+    : `<div class="settings-empty"><strong>Пусто</strong><p class="msg-time">Забаненных пользователей нет</p></div>`;
+  const requestsHtml = requests.length
+    ? `<div class="member-preview-list">${requests.map((user) => `<div class="member-preview-item request"><div class="avatar small">${avatarMarkup(user)}</div><div><strong>${escapeHtml(user.displayName)}</strong><p class="msg-time">@${escapeHtml(user.username)} · ${formatTime(user.createdAt)}</p><div class="member-badges-row"><span class="role-chip pending">request</span></div></div><div class="member-actions request-actions"><button type="button" class="ghost compact-btn" data-room-approve-user="${user.userId}">Принять</button><button type="button" class="ghost danger compact-btn" data-room-decline-user="${user.userId}">Отклонить</button></div></div>`).join("")}</div>`
+    : `<div class="settings-empty"><strong>Пусто</strong><p class="msg-time">Новых заявок нет</p></div>`;
+  const moderationSummaryHtml = canManage
+    ? `<div class="settings-meta-grid room-summary-grid moderation-summary-grid"><div class="settings-pill">Заявки: ${requests.length}</div><div class="settings-pill">Баны: ${bans.length}</div><div class="settings-pill">Участников: ${members.length}</div><div class="settings-pill">Инвайты: ${room.hasInvitation ? 1 : 0}</div></div>`
+    : "";
 
   openSheet(
     `# ${room.name}`,
@@ -2687,6 +2736,7 @@ async function openRoomProfileSheet(roomId, initialTab = "info") {
             <button class="seg-btn ${initialTab === "media" ? "active" : ""}" data-room-profile-tab="media" type="button">Медиа</button>
             <button class="seg-btn ${initialTab === "links" ? "active" : ""}" data-room-profile-tab="links" type="button">Ссылки</button>
             <button class="seg-btn ${initialTab === "files" ? "active" : ""}" data-room-profile-tab="files" type="button">Файлы</button>
+            ${canManage ? `<button class="seg-btn ${initialTab === "moderation" ? "active" : ""}" data-room-profile-tab="moderation" type="button">Модерация</button>` : ""}
           </div>
         </section>
         <section class="settings-card room-profile-panel ${initialTab === "info" ? "" : "hidden"}" data-room-profile-panel="info">
@@ -2709,6 +2759,7 @@ async function openRoomProfileSheet(roomId, initialTab = "info") {
           <div class="settings-card-head"><div><strong>Файлы</strong><p class="msg-time">Все документы и вложения комнаты.</p></div></div>
           ${filesHtml}
         </section>
+        ${canManage ? `<section class="settings-card room-profile-panel ${initialTab === "moderation" ? "" : "hidden"}" data-room-profile-panel="moderation"><div class="settings-card-head"><div><strong>Модерация</strong><p class="msg-time">Управление заявками и ограничениями доступа.</p></div></div>${moderationSummaryHtml}<div class="settings-card-head"><div><strong>Заявки</strong><p class="msg-time">Запросы на вступление в комнату.</p></div></div>${requestsHtml}<div class="settings-card-head"><div><strong>Забаненные</strong><p class="msg-time">Пользователи без доступа в комнату.</p></div></div>${bansHtml}</section>` : ""}
       </div>
     `,
     async () => {}
@@ -2750,6 +2801,34 @@ async function openRoomProfileSheet(roomId, initialTab = "info") {
       }
       closeSheet();
       await selectDm(userId);
+    });
+  });
+
+  els.sheetBody.querySelectorAll("[data-room-unban-user]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const userId = Number(button.dataset.roomUnbanUser);
+      await api(`/api/rooms/${roomId}/bans/${userId}`, { method: "DELETE" });
+      showToast("Пользователь разбанен", "success");
+      await openRoomProfileSheet(roomId, "info");
+    });
+  });
+
+  els.sheetBody.querySelectorAll("[data-room-approve-user]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const userId = Number(button.dataset.roomApproveUser);
+      await api(`/api/rooms/${roomId}/requests/${userId}/approve`, { method: "POST" });
+      showToast("Заявка одобрена", "success");
+      await Promise.all([loadRooms(), loadInvitations()]);
+      await openRoomProfileSheet(roomId, "info");
+    });
+  });
+
+  els.sheetBody.querySelectorAll("[data-room-decline-user]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const userId = Number(button.dataset.roomDeclineUser);
+      await api(`/api/rooms/${roomId}/requests/${userId}`, { method: "DELETE" });
+      showToast("Заявка отклонена", "success");
+      await openRoomProfileSheet(roomId, "info");
     });
   });
 
@@ -4407,6 +4486,7 @@ async function openDmProfileSheet(userId, initialTab = "info") {
   const media = data.media || [];
   const files = data.files || [];
   const links = data.links || [];
+  const mediaPreview = media.slice(0, 3);
 
   const mediaHtml = media.length
     ? `<div class="shared-grid">${media
@@ -4421,7 +4501,16 @@ async function openDmProfileSheet(userId, initialTab = "info") {
     ? `<div class="menu-contacts search-results-list">${files.map((item) => `<a class="menu-contact-item settings-contact-card" href="${escapeHtml(item.fileUrl)}" target="_blank" rel="noopener noreferrer"><div><strong>${escapeHtml(item.fileName || "Файл")}</strong><p class="msg-time">${escapeHtml(formatFileSize(item.fileSize) || "Документ")} · ${formatTime(item.createdAt)}</p></div><span class="menu-badge">→</span></a>`).join("")}</div>`
     : `<div class="settings-empty"><strong>Пусто</strong><p class="msg-time">Файлов пока нет</p></div>`;
 
-  const statusLabel = state.onlineIds.has(user.id) ? "В сети" : formatLastSeen(user.lastSeenAt);
+  const statusLabel = presenceLabel(user);
+  const summaryHtml = `
+    <div class="settings-meta-grid room-summary-grid">
+      <div class="settings-pill">Медиа: ${media.length}</div>
+      <div class="settings-pill">Ссылки: ${links.length}</div>
+      <div class="settings-pill">Файлы: ${files.length}</div>
+      <div class="settings-pill ${state.onlineIds.has(user.id) ? "" : "disabled"}">${state.onlineIds.has(user.id) ? "online" : "last seen"}</div>
+    </div>
+    ${mediaPreview.length ? `<div class="room-media-strip">${mediaPreview.map((item) => `<button type="button" class="room-media-strip-item" data-open-image="${escapeHtml(item.imageUrl)}"><img src="${escapeHtml(item.imageUrl)}" alt="image" /></button>`).join("")}${media.length > mediaPreview.length ? `<button type="button" class="room-media-strip-more" data-dm-profile-tab-jump="media">+${media.length - mediaPreview.length}</button>` : ""}</div>` : ""}
+  `;
 
   openSheet(
     user.displayName,
@@ -4434,7 +4523,7 @@ async function openDmProfileSheet(userId, initialTab = "info") {
             <div>
               <strong>${escapeHtml(user.displayName)}</strong>
               <p class="msg-time">@${escapeHtml(user.username)}${user.isAdmin ? " · admin" : ""}</p>
-              <p class="msg-time">${statusLabel}</p>
+              <p class="msg-time">${escapeHtml(statusLabel)}</p>
             </div>
           </div>
         </section>
@@ -4448,6 +4537,7 @@ async function openDmProfileSheet(userId, initialTab = "info") {
         </section>
         <section class="settings-card room-profile-panel ${initialTab === "info" ? "" : "hidden"}" data-dm-profile-panel="info">
           <div class="settings-card-head"><div><strong>О пользователе</strong><p class="msg-time">Основная информация о собеседнике.</p></div></div>
+          ${summaryHtml}
           <div class="settings-meta-grid">
             <div class="settings-pill">Диалог</div>
             <div class="settings-pill ${state.onlineIds.has(user.id) ? "" : "disabled"}">${state.onlineIds.has(user.id) ? "online" : "offline"}</div>
@@ -4494,6 +4584,17 @@ async function openDmProfileSheet(userId, initialTab = "info") {
 
   els.sheetBody.querySelectorAll("[data-open-image]").forEach((button) => {
     button.addEventListener("click", () => openImageViewer(button.dataset.openImage || ""));
+  });
+  els.sheetBody.querySelectorAll("[data-dm-profile-tab-jump]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const tab = button.dataset.dmProfileTabJump;
+      els.sheetBody.querySelectorAll("[data-dm-profile-tab]").forEach((item) => {
+        item.classList.toggle("active", item.dataset.dmProfileTab === tab);
+      });
+      els.sheetBody.querySelectorAll("[data-dm-profile-panel]").forEach((panel) => {
+        panel.classList.toggle("hidden", panel.dataset.dmProfilePanel !== tab);
+      });
+    });
   });
 
   els.sheetBody.querySelector("[data-dm-open-search]")?.addEventListener("click", async () => {
