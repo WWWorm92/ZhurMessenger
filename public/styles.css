@@ -395,6 +395,10 @@ button {
   min-height: 36px;
 }
 
+.chat-head.selection-mode .chat-head-main {
+  gap: 10px;
+}
+
 .update-banner strong {
   display: block;
   font-size: 14px;
@@ -1034,6 +1038,17 @@ button {
   color: #4f83ad;
   font-size: 11px;
   font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border-radius: 10px;
+  background: rgba(79, 131, 173, 0.08);
+  border: 1px solid rgba(106, 160, 205, 0.18);
+}
+
+.msg-forwarded .ui-icon {
+  opacity: 0.9;
 }
 
 .msg-meta {
@@ -1639,6 +1654,10 @@ button {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 8px;
+}
+
+.notifications-grid {
+  margin-top: -2px;
 }
 
 .settings-pill {
@@ -2494,6 +2513,8 @@ body[data-theme="dark"] .msg-reply {
 
 body[data-theme="dark"] .msg-forwarded {
   color: #8fc3ee;
+  background: rgba(56, 104, 145, 0.18);
+  border-color: rgba(107, 165, 214, 0.22);
 }
 
 body[data-theme="dark"] .msg {

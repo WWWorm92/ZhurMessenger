@@ -1355,6 +1355,36 @@ app.get("/api/notifications/vapid-public-key", authMiddleware, async (req, res) 
   res.json({ publicKey: WEB_PUSH_PUBLIC_KEY || null });
 });
 
+app.get("/api/notifications/status", authMiddleware, async (req, res) => {
+  try {
+    const row = await get("SELECT COUNT(*) AS count FROM push_subscriptions WHERE user_id = ?", [req.user.id]);
+    res.json({
+      pushEnabled: WEB_PUSH_ENABLED,
+      subscriptions: Number(row?.count || 0),
+    });
+  } catch (error) {
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+app.post("/api/notifications/test", authMiddleware, async (req, res) => {
+  try {
+    const row = await get("SELECT COUNT(*) AS count FROM push_subscriptions WHERE user_id = ?", [req.user.id]);
+    if (!Number(row?.count || 0)) {
+      res.status(400).json({ error: "No push subscriptions found" });
+      return;
+    }
+    await sendWebPushToUser(req.user.id, {
+      title: "Pulse Messenger",
+      body: "Тестовое push-уведомление отправлено успешно.",
+      url: "/",
+    });
+    res.json({ ok: true });
+  } catch (error) {
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
 app.post("/api/notifications/subscriptions", authMiddleware, async (req, res) => {
   try {
     const endpoint = normalizeText(req.body.endpoint, 1200);

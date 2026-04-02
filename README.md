@@ -91,6 +91,8 @@ Copy `.env.example` and adjust values.
 - `WEB_PUSH_PUBLIC_KEY` - optional web-push public key
 - `WEB_PUSH_PRIVATE_KEY` - optional web-push private key
 - `WEB_PUSH_SUBJECT` - contact for VAPID, e.g. `mailto:admin@example.com`
+- `GET /api/notifications/status` - check push backend/subscription status for current user
+- `POST /api/notifications/test` - send a test push to current user subscriptions
 
 Production security notes:
 

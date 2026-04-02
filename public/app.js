@@ -100,6 +100,7 @@ const els = {
   chatTitle: document.getElementById("chatTitle"),
   chatStatus: document.getElementById("chatStatus"),
   chatActionsBtn: document.getElementById("chatActionsBtn"),
+  selectionAllBtn: document.getElementById("selectionAllBtn"),
   selectionCopyBtn: document.getElementById("selectionCopyBtn"),
   selectionForwardBtn: document.getElementById("selectionForwardBtn"),
   selectionDeleteBtn: document.getElementById("selectionDeleteBtn"),
@@ -185,6 +186,16 @@ function toggleMessageSelection(messageId) {
   if (!state.selectedMessageIds.size) {
     state.selectionMode = false;
   }
+  refreshSelectionBar();
+  renderMessages();
+}
+
+function selectAllLoadedMessages() {
+  const ids = getCurrentMessages()
+    .map((message) => Number(message.id))
+    .filter(Boolean);
+  state.selectionMode = true;
+  state.selectedMessageIds = new Set(ids);
   refreshSelectionBar();
   renderMessages();
 }
@@ -2024,7 +2035,7 @@ function renderMessages({ forceBottom = false } = {}) {
         <span class="msg-author">${escapeHtml(sender.displayName)}${sender.isAdmin ? " 👑" : ""}</span>
         <span class="msg-time">#${message.id}</span>
       </div>
-      ${message.forwardedFromName ? `<div class="msg-forwarded">Forwarded from ${escapeHtml(message.forwardedFromName)}</div>` : ""}
+      ${message.forwardedFromName ? `<div class="msg-forwarded">${iconMarkup("arrowRight", "xs")}<span>Forwarded from ${escapeHtml(message.forwardedFromName)}</span></div>` : ""}
       ${replyTarget ? `<div class="msg-reply">${escapeHtml(replyPreview.slice(0, 120))}</div>` : ""}
       <div class="msg-text">${message.deletedAt ? "Сообщение удалено" : escapeHtml(message.content || "")}</div>
       ${!message.deletedAt && message.imageUrl ? `<img class="msg-image" src="${escapeHtml(message.imageUrl)}" alt="image" />` : ""}
@@ -2175,6 +2186,7 @@ function expandRenderWindowBackwardIfNeeded() {
 function updateChatHeader() {
   const chatHead = document.querySelector('.chat-head');
   els.chatActionsBtn.classList.add("hidden");
+  els.selectionAllBtn?.classList.add("hidden");
   els.selectionCopyBtn?.classList.add("hidden");
   els.selectionForwardBtn?.classList.add("hidden");
   els.selectionDeleteBtn?.classList.add("hidden");
@@ -2195,6 +2207,7 @@ function updateChatHeader() {
     els.chatTitle.textContent = `${state.selectedMessageIds.size} выбрано`;
     els.chatStatus.textContent = "Режим выбора сообщений";
     els.chatHeadAvatar.innerHTML = iconMarkup("chat");
+    els.selectionAllBtn?.classList.remove("hidden");
     els.selectionCopyBtn?.classList.remove("hidden");
     els.selectionForwardBtn?.classList.remove("hidden");
     els.selectionDeleteBtn?.classList.remove("hidden");
@@ -4174,6 +4187,7 @@ async function openSettingsModal() {
   renderSheetLoading("Настройки", 5);
   const sessionsData = await api("/api/auth/sessions").catch(() => ({ sessions: [] }));
   const sessions = sessionsData.sessions || [];
+  const notificationsData = await api("/api/notifications/status").catch(() => ({ pushEnabled: false, subscriptions: 0 }));
 
   const notificationSupported = isNotificationsAvailable();
   const permissionLabel = notificationSupported ? Notification.permission : "unsupported";
@@ -4255,9 +4269,16 @@ async function openSettingsModal() {
             </label>
           </div>
           <p class="settings-status" id="notificationsStatus">${statusText}</p>
+          <div class="settings-meta-grid notifications-grid">
+            <div class="settings-pill ${notificationsData.pushEnabled ? "" : "disabled"}">Push backend: ${notificationsData.pushEnabled ? "OK" : "OFF"}</div>
+            <div class="settings-pill ${notificationsData.subscriptions ? "" : "disabled"}">Подписок: ${notificationsData.subscriptions}</div>
+          </div>
           <div class="settings-actions-row">
             <button id="notificationsPermissionBtn" class="ghost ${notificationsGranted || notificationsUnsupported ? "hidden" : ""}" type="button">Разрешить уведомления</button>
             <button id="notificationsHelpBtn" class="ghost ${notificationsDenied ? "" : "hidden"}" type="button">Как включить</button>
+            <button id="notificationsTestBtn" class="ghost ${notificationsGranted ? "" : "hidden"}" type="button">Тест уведомления</button>
+            <button id="notificationsPushTestBtn" class="ghost ${notificationsGranted && notificationsData.pushEnabled && notificationsData.subscriptions ? "" : "hidden"}" type="button">Тест push</button>
+            <button id="notificationsRefreshBtn" class="ghost" type="button">Обновить статус</button>
           </div>
           <div class="settings-meta-grid">
             <div class="settings-pill disabled">Звуки скоро</div>
@@ -4311,6 +4332,32 @@ async function openSettingsModal() {
     } catch (error) {
       alert(error.message);
     }
+  });
+
+  els.sheetBody.querySelector("#notificationsTestBtn")?.addEventListener("click", async () => {
+    try {
+      await showLocalNotification({
+        title: "Pulse Messenger",
+        body: "Тестовое уведомление работает корректно.",
+      });
+      showToast("Тестовое уведомление отправлено", "success");
+    } catch (error) {
+      alert(error.message || "Не удалось показать уведомление");
+    }
+  });
+
+  els.sheetBody.querySelector("#notificationsPushTestBtn")?.addEventListener("click", async () => {
+    try {
+      await api("/api/notifications/test", { method: "POST" });
+      showToast("Тестовый push отправлен", "success");
+    } catch (error) {
+      alert(error.message || "Не удалось отправить push");
+    }
+  });
+
+  els.sheetBody.querySelector("#notificationsRefreshBtn")?.addEventListener("click", async () => {
+    closeSheet();
+    await openSettingsModal();
   });
 
   els.sheetBody.querySelector("#notificationsHelpBtn")?.addEventListener("click", () => {
@@ -4443,6 +4490,7 @@ async function openSharedMediaSheet() {
   const targetId = state.selected.id;
   const data = await api(`/api/media/shared?scope=${scope}&targetId=${targetId}&limit=80`);
   const media = data.media || [];
+  const files = data.files || [];
   const links = data.links || [];
 
   const mediaHtml = media.length
@@ -4456,14 +4504,18 @@ async function openSharedMediaSheet() {
   const linksHtml = links.length
     ? `<div class="menu-contacts search-results-list">${links.map((item) => `<a class="menu-contact-item settings-contact-card" href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer"><div><strong>${escapeHtml(item.url)}</strong><p class="msg-time">Сообщение #${item.id} · ${formatTime(item.createdAt)}</p></div><span class="menu-badge">→</span></a>`).join("")}</div>`
     : `<div class="settings-empty"><strong>Пусто</strong><p class="msg-time">Ссылок пока нет</p></div>`;
+  const filesHtml = files.length
+    ? `<div class="menu-contacts search-results-list">${files.map((item) => `<a class="menu-contact-item settings-contact-card" href="${escapeHtml(item.fileUrl)}" target="_blank" rel="noopener noreferrer"><div><strong>${escapeHtml(item.fileName || "Файл")}</strong><p class="msg-time">${escapeHtml(formatFileSize(item.fileSize) || "Документ")} · ${formatTime(item.createdAt)}</p></div><span class="menu-badge">→</span></a>`).join("")}</div>`
+    : `<div class="settings-empty"><strong>Пусто</strong><p class="msg-time">Файлов пока нет</p></div>`;
 
   openSheet(
     "Медиа и ссылки",
     "",
     `
       <div class="stack settings-layout">
-        <section class="settings-hero"><div><strong>Shared media</strong><p class="msg-time">Все изображения и ссылки из выбранного чата.</p></div></section>
+        <section class="settings-hero"><div><strong>Shared media</strong><p class="msg-time">Все изображения, файлы и ссылки из выбранного чата.</p></div></section>
         <section class="settings-card"><div class="settings-card-head"><div><strong>Медиа</strong><p class="msg-time">Картинки, отправленные в этом чате.</p></div></div>${mediaHtml}</section>
+        <section class="settings-card"><div class="settings-card-head"><div><strong>Файлы</strong><p class="msg-time">Документы и вложения из чата.</p></div></div>${filesHtml}</section>
         <section class="settings-card"><div class="settings-card-head"><div><strong>Ссылки</strong><p class="msg-time">Все URL, найденные в сообщениях.</p></div></div>${linksHtml}</section>
       </div>
     `,
@@ -5075,6 +5127,9 @@ els.reloadAppBtn?.addEventListener("click", () => {
 });
 els.selectionCopyBtn?.addEventListener("click", async () => {
   await copySelectedMessages();
+});
+els.selectionAllBtn?.addEventListener("click", () => {
+  selectAllLoadedMessages();
 });
 els.selectionClearBtn?.addEventListener("click", () => clearMessageSelection());
 els.selectionForwardBtn?.addEventListener("click", () => openForwardSheet([]));
