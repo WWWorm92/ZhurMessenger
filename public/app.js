@@ -200,6 +200,14 @@ function selectAllLoadedMessages() {
   renderMessages();
 }
 
+function allLoadedMessagesSelected() {
+  const loaded = getCurrentMessages().map((message) => Number(message.id)).filter(Boolean);
+  if (!loaded.length) {
+    return false;
+  }
+  return loaded.every((id) => state.selectedMessageIds.has(id));
+}
+
 function refreshUpdateBanner() {
   const hasUpdate = Boolean(state.remoteVersion && state.remoteVersion !== APP_VERSION);
   els.updateBanner?.classList.toggle("hidden", !hasUpdate);
@@ -1895,18 +1903,33 @@ function formatFileSize(bytes) {
   return `${(value / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+function fileKind(name) {
+  const ext = String(name || "").toLowerCase().split('.').pop() || "";
+  if (["pdf"].includes(ext)) return "PDF";
+  if (["doc", "docx"].includes(ext)) return "DOC";
+  if (["xls", "xlsx", "csv"].includes(ext)) return "XLS";
+  if (["zip", "7z", "rar"].includes(ext)) return "ZIP";
+  if (["txt"].includes(ext)) return "TXT";
+  return "FILE";
+}
+
 function renderFileMessage(message) {
   if (!message.fileUrl || message.deletedAt) {
     return "";
   }
+  const kind = fileKind(message.fileName);
   return `
-    <a class="file-box" href="${escapeHtml(message.fileUrl)}" target="_blank" rel="noopener noreferrer">
-      ${iconMarkup("room", "sm")}
-      <div>
+    <div class="file-box">
+      <div class="file-kind-badge kind-${escapeHtml(kind.toLowerCase())}">${escapeHtml(kind)}</div>
+      <div class="file-box-main">
         <strong>${escapeHtml(message.fileName || "Файл")}</strong>
-        <p class="msg-time">${escapeHtml(formatFileSize(message.fileSize) || "Документ")}</p>
+        <p class="msg-time">${escapeHtml(formatFileSize(message.fileSize) || "Документ")} · документ</p>
       </div>
-    </a>
+      <div class="file-box-actions">
+        <a class="ghost compact-btn" href="${escapeHtml(message.fileUrl)}" target="_blank" rel="noopener noreferrer">Открыть</a>
+        <button class="ghost compact-btn" type="button" data-copy-file-link="${escapeHtml(message.fileUrl)}">Копия</button>
+      </div>
+    </div>
   `;
 }
 
@@ -2111,6 +2134,21 @@ function renderMessages({ forceBottom = false } = {}) {
     });
   });
 
+  els.messages.querySelectorAll("[data-copy-file-link]").forEach((button) => {
+    button.addEventListener("click", async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const value = String(button.dataset.copyFileLink || "");
+      if (!value) return;
+      try {
+        await navigator.clipboard.writeText(value);
+        showToast("Ссылка на файл скопирована", "success");
+      } catch {
+        showToast(value, "info");
+      }
+    });
+  });
+
   if (forceBottom || wasNearBottom) {
     els.messages.scrollTop = els.messages.scrollHeight;
   } else {
@@ -2203,11 +2241,15 @@ function updateChatHeader() {
   }
 
   if (state.selectionMode && state.selectedMessageIds.size) {
+    const loadedCount = getCurrentMessages().length;
     chatHead?.classList.add('selection-mode');
     els.chatTitle.textContent = `${state.selectedMessageIds.size} выбрано`;
-    els.chatStatus.textContent = "Режим выбора сообщений";
+    els.chatStatus.textContent = loadedCount ? `${state.selectedMessageIds.size} из ${loadedCount} загруженных` : "Режим выбора сообщений";
     els.chatHeadAvatar.innerHTML = iconMarkup("chat");
     els.selectionAllBtn?.classList.remove("hidden");
+    if (els.selectionAllBtn) {
+      els.selectionAllBtn.textContent = allLoadedMessagesSelected() ? "Снять все" : "Выбрать все";
+    }
     els.selectionCopyBtn?.classList.remove("hidden");
     els.selectionForwardBtn?.classList.remove("hidden");
     els.selectionDeleteBtn?.classList.remove("hidden");
@@ -3190,10 +3232,21 @@ async function deleteMessage(messageId) {
 
 async function deleteSelectedMessages() {
   const ids = Array.from(state.selectedMessageIds);
-  for (const id of ids) {
-    await deleteMessage(id);
+  if (!ids.length) {
+    return;
   }
-  clearMessageSelection();
+  openSheet(
+    `Удалить ${ids.length}`,
+    "Удалить",
+    `<div class="stack"><p>Удалить выбранные сообщения?</p><p class="msg-time">Это действие необратимо.</p></div>`,
+    async () => {
+      for (const id of ids) {
+        await deleteMessage(id);
+      }
+      clearMessageSelection();
+      showToast("Сообщения удалены", "success");
+    }
+  );
 }
 
 async function copySelectedMessages() {
@@ -3255,10 +3308,19 @@ function openForwardSheet(messageIds) {
   const messages = ids.map((id) => getMessageById(id)).filter(Boolean);
   if (!messages.length) return;
   const targets = buildForwardTargets();
+  const previewHtml = messages
+    .slice(0, 3)
+    .map((message) => {
+      const payload = buildForwardPayload(message);
+      if (!payload) return "";
+      const label = payload.fileName || payload.content || "Сообщение";
+      return `<div class="forward-preview-item"><strong>${escapeHtml(label.slice(0, 72))}</strong><p class="msg-time">${message.forwardedFromName ? `Forwarded from ${escapeHtml(message.forwardedFromName)}` : "Будет переслано"}</p></div>`;
+    })
+    .join("");
   openSheet(
     "Переслать",
     "",
-    `<div class="stack settings-layout"><section class="settings-hero"><div><strong>Переслать сообщения</strong><p class="msg-time">Выберите диалог или комнату для пересылки.</p></div></section><section class="settings-card"><div class="menu-contacts search-results-list">${targets.map((target) => `<button type="button" class="menu-contact-item settings-contact-card" data-forward-scope="${target.scope}" data-forward-id="${target.id}"><div><strong>${escapeHtml(target.label)}</strong><p class="msg-time">${escapeHtml(target.sublabel)}</p></div><span class="menu-badge">→</span></button>`).join("")}</div></section></div>`,
+    `<div class="stack settings-layout"><section class="settings-hero"><div><strong>Переслать сообщения</strong><p class="msg-time">Выберите диалог или комнату для пересылки.</p></div></section><section class="settings-card"><div class="settings-card-head"><div><strong>Что будет переслано</strong><p class="msg-time">${messages.length} сообщ. выбрано</p></div></div><div class="stack">${previewHtml}${messages.length > 3 ? `<p class="msg-time">И еще ${messages.length - 3}</p>` : ""}</div></section><section class="settings-card"><div class="menu-contacts search-results-list">${targets.map((target) => `<button type="button" class="menu-contact-item settings-contact-card" data-forward-scope="${target.scope}" data-forward-id="${target.id}"><div><strong>${escapeHtml(target.label)}</strong><p class="msg-time">${escapeHtml(target.sublabel)}</p></div><span class="menu-badge">→</span></button>`).join("")}</div></section></div>`,
     async () => {}
   );
   els.sheetBody.querySelectorAll("[data-forward-id]").forEach((button) => {
@@ -4505,7 +4567,7 @@ async function openSharedMediaSheet() {
     ? `<div class="menu-contacts search-results-list">${links.map((item) => `<a class="menu-contact-item settings-contact-card" href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer"><div><strong>${escapeHtml(item.url)}</strong><p class="msg-time">Сообщение #${item.id} · ${formatTime(item.createdAt)}</p></div><span class="menu-badge">→</span></a>`).join("")}</div>`
     : `<div class="settings-empty"><strong>Пусто</strong><p class="msg-time">Ссылок пока нет</p></div>`;
   const filesHtml = files.length
-    ? `<div class="menu-contacts search-results-list">${files.map((item) => `<a class="menu-contact-item settings-contact-card" href="${escapeHtml(item.fileUrl)}" target="_blank" rel="noopener noreferrer"><div><strong>${escapeHtml(item.fileName || "Файл")}</strong><p class="msg-time">${escapeHtml(formatFileSize(item.fileSize) || "Документ")} · ${formatTime(item.createdAt)}</p></div><span class="menu-badge">→</span></a>`).join("")}</div>`
+    ? `<div class="file-list">${files.map((item) => `<div class="file-box shared"><div class="file-kind-badge kind-${escapeHtml(fileKind(item.fileName).toLowerCase())}">${escapeHtml(fileKind(item.fileName))}</div><div class="file-box-main"><strong>${escapeHtml(item.fileName || "Файл")}</strong><p class="msg-time">${escapeHtml(formatFileSize(item.fileSize) || "Документ")} · ${formatTime(item.createdAt)}</p></div><div class="file-box-actions"><a class="ghost compact-btn" href="${escapeHtml(item.fileUrl)}" target="_blank" rel="noopener noreferrer">Открыть</a><button class="ghost compact-btn" type="button" data-copy-file-link="${escapeHtml(item.fileUrl)}">Копия</button></div></div>`).join("")}</div>`
     : `<div class="settings-empty"><strong>Пусто</strong><p class="msg-time">Файлов пока нет</p></div>`;
 
   openSheet(
@@ -4524,6 +4586,18 @@ async function openSharedMediaSheet() {
 
   els.sheetBody.querySelectorAll("[data-open-image]").forEach((button) => {
     button.addEventListener("click", () => openImageViewer(button.dataset.openImage || ""));
+  });
+  els.sheetBody.querySelectorAll("[data-copy-file-link]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const value = String(button.dataset.copyFileLink || "");
+      if (!value) return;
+      try {
+        await navigator.clipboard.writeText(value);
+        showToast("Ссылка на файл скопирована", "success");
+      } catch {
+        showToast(value, "info");
+      }
+    });
   });
 }
 
@@ -5129,6 +5203,10 @@ els.selectionCopyBtn?.addEventListener("click", async () => {
   await copySelectedMessages();
 });
 els.selectionAllBtn?.addEventListener("click", () => {
+  if (allLoadedMessagesSelected()) {
+    clearMessageSelection();
+    return;
+  }
   selectAllLoadedMessages();
 });
 els.selectionClearBtn?.addEventListener("click", () => clearMessageSelection());
