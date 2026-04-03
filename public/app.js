@@ -148,6 +148,30 @@ function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
+function escapeAttribute(value) {
+  return escapeHtml(value).replaceAll("`", "&#096;");
+}
+
+function renderMessageText(text) {
+  const source = String(text || "");
+  const urlRegex = /(https?:\/\/[^\s<]+)|(www\.[^\s<]+\.[a-z]{2,}[^\s<.,!?;:]*)|(\b[a-z0-9-]+\.[a-z]{2,}(?:\/[^\s<.,!?;:]*)?)/gi;
+  let lastIndex = 0;
+  let html = "";
+  source.replace(urlRegex, (match, _http, _www, _bare, offset) => {
+    html += escapeHtml(source.slice(lastIndex, offset));
+    let href = match;
+    if (!/^https?:\/\//i.test(href)) {
+      href = `https://${href}`;
+    }
+    const safeHref = escapeAttribute(href);
+    html += `<a class="msg-link" href="${safeHref}" target="_blank" rel="noopener noreferrer">${escapeHtml(match)}</a>`;
+    lastIndex = offset + match.length;
+    return match;
+  });
+  html += escapeHtml(source.slice(lastIndex));
+  return html;
+}
+
 function showToast(message, type = "info") {
   if (!els.toastStack || !message) {
     return;
@@ -918,6 +942,40 @@ async function loadPublicRoomPreviewIfNeeded() {
     `;
   } catch {
     els.authRoomPreview.classList.add("hidden");
+  }
+}
+
+async function handleIncomingNavigation(urlString) {
+  if (!urlString) return;
+  try {
+    const url = new URL(urlString, location.origin);
+    const dmId = Number(url.searchParams.get("dm") || 0);
+    const roomId = Number(url.searchParams.get("room") || 0);
+    const slugMatch = url.pathname.match(/^\/room\/([a-z0-9-]+)$/i);
+
+    if (slugMatch?.[1] && state.token) {
+      const data = await api(`/api/room-slug/${encodeURIComponent(slugMatch[1])}`);
+      if (data.room?.id) {
+        await selectRoom(data.room.id);
+        history.replaceState({}, "", "/");
+      }
+      return;
+    }
+
+    if (!state.token) {
+      return;
+    }
+    if (dmId) {
+      await selectDm(dmId);
+      history.replaceState({}, "", "/");
+      return;
+    }
+    if (roomId) {
+      await selectRoom(roomId);
+      history.replaceState({}, "", "/");
+    }
+  } catch {
+    // ignore broken navigation intents
   }
 }
 
@@ -2060,7 +2118,7 @@ function renderMessages({ forceBottom = false } = {}) {
       </div>
       ${message.forwardedFromName ? `<div class="msg-forwarded">${iconMarkup("arrowRight", "xs")}<span>Forwarded from ${escapeHtml(message.forwardedFromName)}</span></div>` : ""}
       ${replyTarget ? `<div class="msg-reply">${escapeHtml(replyPreview.slice(0, 120))}</div>` : ""}
-      <div class="msg-text">${message.deletedAt ? "Сообщение удалено" : escapeHtml(message.content || "")}</div>
+      <div class="msg-text">${message.deletedAt ? "Сообщение удалено" : renderMessageText(message.content || "")}</div>
       ${!message.deletedAt && message.imageUrl ? `<img class="msg-image" src="${escapeHtml(message.imageUrl)}" alt="image" />` : ""}
       ${!message.deletedAt ? renderFileMessage(message) : ""}
       ${!message.deletedAt ? renderPoll(message.poll) : ""}
@@ -4340,6 +4398,7 @@ async function openSettingsModal() {
             <button id="notificationsHelpBtn" class="ghost ${notificationsDenied ? "" : "hidden"}" type="button">Как включить</button>
             <button id="notificationsTestBtn" class="ghost ${notificationsGranted ? "" : "hidden"}" type="button">Тест уведомления</button>
             <button id="notificationsPushTestBtn" class="ghost ${notificationsGranted && notificationsData.pushEnabled && notificationsData.subscriptions ? "" : "hidden"}" type="button">Тест push</button>
+            <button id="notificationsResetBtn" class="ghost ${notificationsData.subscriptions ? "" : "hidden"}" type="button">Сбросить подписку</button>
             <button id="notificationsRefreshBtn" class="ghost" type="button">Обновить статус</button>
           </div>
           <div class="settings-meta-grid">
@@ -4414,6 +4473,23 @@ async function openSettingsModal() {
       showToast("Тестовый push отправлен", "success");
     } catch (error) {
       alert(error.message || "Не удалось отправить push");
+    }
+  });
+
+  els.sheetBody.querySelector("#notificationsResetBtn")?.addEventListener("click", async () => {
+    try {
+      await removePushSubscriptionOnServer();
+      const registration = await registerServiceWorkerIfNeeded();
+      const sub = await registration?.pushManager.getSubscription();
+      if (sub) {
+        await sub.unsubscribe();
+      }
+      await syncPushSubscription();
+      showToast("Push-подписка обновлена", "success");
+      closeSheet();
+      await openSettingsModal();
+    } catch (error) {
+      alert(error.message || "Не удалось сбросить подписку");
     }
   });
 
@@ -4941,6 +5017,7 @@ async function startSession() {
   renderMe();
   refreshInvitationsButton();
   refreshListFiltersUI();
+  await handleIncomingNavigation(location.href);
   const slugMatch = location.pathname.match(/^\/room\/([a-z0-9-]+)$/i);
   if (slugMatch?.[1]) {
     try {
@@ -5427,6 +5504,14 @@ applyTheme(state.theme);
 setMode("login");
 refreshListFiltersUI();
 loadPublicRoomPreviewIfNeeded().catch(() => {});
+
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.addEventListener("message", async (event) => {
+    if (event.data?.type === "open-url") {
+      await handleIncomingNavigation(event.data.url || "/");
+    }
+  });
+}
 
 fetch("/api/auth/refresh", { method: "POST", credentials: "same-origin" })
   .then((response) => response.json().then((data) => ({ response, data })))
