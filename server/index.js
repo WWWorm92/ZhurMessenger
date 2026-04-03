@@ -2008,7 +2008,7 @@ app.post("/api/messages/:userId", authMiddleware, messageRateLimit, async (req, 
     await sendWebPushToUser(peerUserId, {
       title: req.user.displayName || req.user.username,
       body: content || (fileName ? `Файл: ${fileName}` : imageUrl ? "Изображение" : "Новое сообщение"),
-      url: "/",
+      url: `/?dm=${req.user.id}`,
     });
 
     const responsePayload = await buildDmPayload(created, req.user.id);
@@ -3758,7 +3758,7 @@ app.post("/api/rooms/:roomId/messages", authMiddleware, messageRateLimit, async 
       await sendWebPushToUser(memberId, {
         title: `# ${room.name}`,
         body: content || (fileName ? `Файл: ${fileName}` : imageUrl ? "Изображение" : "Новое сообщение"),
-        url: "/",
+        url: `/?room=${roomId}`,
       });
     }
 

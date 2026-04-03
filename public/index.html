@@ -23,15 +23,28 @@
 
     <main class="root">
       <section id="authView" class="auth-view">
-        <div class="auth-card">
-          <h1>Pulse Messenger</h1>
-          <p>Приватный realtime-мессенджер для командных комнат и личных диалогов.</p>
-          <div id="authRoomPreview" class="settings-card hidden"></div>
+        <div class="auth-shell">
+          <section class="auth-hero panel">
+            <div class="auth-brand-badge">PM</div>
+            <div class="stack">
+              <h1>Pulse Messenger</h1>
+              <p>Войдите, чтобы продолжить работу.</p>
+            </div>
+          </section>
 
-          <form id="authForm" class="stack">
+          <div class="auth-card">
+            <div class="auth-card-head">
+              <div>
+                <strong>Вход в аккаунт</strong>
+                <p>Продолжите работу в мессенджере под своим аккаунтом.</p>
+              </div>
+            </div>
+            <div id="authRoomPreview" class="settings-card hidden"></div>
+
+            <form id="authForm" class="stack auth-form-grid">
             <label>
               <span>Логин</span>
-              <input id="usernameInput" type="text" minlength="3" maxlength="24" required />
+              <input id="usernameInput" type="text" minlength="3" maxlength="24" required placeholder="username" />
             </label>
 
             <label id="displayNameField" class="hidden">
@@ -46,12 +59,13 @@
 
             <label>
               <span>Пароль</span>
-              <input id="passwordInput" type="password" minlength="6" required />
+              <input id="passwordInput" type="password" minlength="6" required placeholder="••••••••" />
             </label>
 
             <button id="authSubmitBtn" class="primary" type="submit">Войти</button>
             <p id="authError" class="error"></p>
-          </form>
+            </form>
+          </div>
         </div>
       </section>
 
