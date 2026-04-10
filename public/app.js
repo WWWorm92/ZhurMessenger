@@ -1931,16 +1931,24 @@ function renderPoll(poll) {
   if (!poll) {
     return "";
   }
+  const totalVotes = poll.options.reduce((sum, item) => sum + item.votes, 0);
   const options = poll.options
     .map(
-      (option) => `
+      (option) => {
+        const percent = totalVotes ? Math.round((option.votes / totalVotes) * 100) : 0;
+        return `
       <button class="poll-option ${option.votedByMe ? "voted" : ""}" data-poll-id="${poll.id}" data-option-id="${option.id}" type="button">
-        ${escapeHtml(option.text)} · ${option.votes}
+        <div class="poll-option-row">
+          <span>${escapeHtml(option.text)}</span>
+          <strong>${percent}%</strong>
+        </div>
+        <div class="poll-progress"><span style="width:${percent}%"></span></div>
+        <span class="poll-votes-meta">${option.votes} голос${option.votes === 1 ? "" : option.votes < 5 ? "а" : "ов"}</span>
       </button>
-    `
+    `;
+      }
     )
     .join("");
-  const totalVotes = poll.options.reduce((sum, item) => sum + item.votes, 0);
   const canClose = !poll.isClosed && (state.me?.isAdmin || poll.creatorId === state.me?.id);
 
   return `
@@ -1951,6 +1959,50 @@ function renderPoll(poll) {
       ${canClose ? `<button class="ghost" data-close-poll="${poll.id}" type="button">Закрыть опрос</button>` : ""}
     </div>
   `;
+}
+
+function openPollVotersSheet(poll, optionId) {
+  const option = poll?.options?.find((item) => item.id === optionId);
+  if (!option) {
+    return;
+  }
+  const html = option.voters?.length
+    ? `<div class="member-preview-list">${option.voters.map((voter) => `<div class="member-preview-item"><div><strong>${escapeHtml(voter.displayName)}</strong><p class="msg-time">@${escapeHtml(voter.username)}</p></div></div>`).join("")}</div>`
+    : `<div class="settings-empty"><strong>Пусто</strong><p class="msg-time">За этот вариант еще не голосовали</p></div>`;
+  openSheet(`Голоса · ${option.text}`, "", html, async () => {});
+}
+
+function openPollOverviewSheet(poll) {
+  if (!poll) {
+    return;
+  }
+  const totalVotes = poll.options.reduce((sum, option) => sum + Number(option.votes || 0), 0);
+  const html = `
+    <div class="stack settings-layout">
+      <section class="settings-hero">
+        <div>
+          <strong>${escapeHtml(poll.question)}</strong>
+          <p class="msg-time">Всего голосов: ${totalVotes}${poll.isClosed ? " · опрос закрыт" : ""}</p>
+        </div>
+      </section>
+      <section class="settings-card">
+        <div class="stack">
+          ${poll.options.map((option) => `
+            <div class="poll-overview-card">
+              <div class="poll-option-row">
+                <span>${escapeHtml(option.text)}</span>
+                <strong>${totalVotes ? Math.round((option.votes / totalVotes) * 100) : 0}%</strong>
+              </div>
+              <div class="poll-progress"><span style="width:${totalVotes ? Math.round((option.votes / totalVotes) * 100) : 0}%"></span></div>
+              <span class="poll-votes-meta">${option.votes} голос${option.votes === 1 ? "" : option.votes < 5 ? "а" : "ов"}</span>
+              ${option.voters?.length ? `<div class="member-preview-list compact-list">${option.voters.map((voter) => `<div class="member-preview-item compact"><div class="avatar small">${escapeHtml((voter.displayName || "?").slice(0,2).toUpperCase())}</div><div><strong>${escapeHtml(voter.displayName)}</strong><p class="msg-time">@${escapeHtml(voter.username)}</p></div></div>`).join("")}</div>` : `<div class="settings-empty compact-empty"><p class="msg-time">За этот вариант еще не голосовали</p></div>`}
+            </div>
+          `).join("")}
+        </div>
+      </section>
+    </div>
+  `;
+  openSheet("Обзор опроса", "", html, async () => {});
 }
 
 function formatFileSize(bytes) {
@@ -1989,6 +2041,11 @@ function renderFileMessage(message) {
       </div>
     </div>
   `;
+}
+
+function renderSharedFileCard(item) {
+  const kind = fileKind(item.fileName);
+  return `<div class="file-box shared"><div class="file-kind-badge kind-${escapeHtml(kind.toLowerCase())}">${escapeHtml(kind)}</div><div class="file-box-main"><strong>${escapeHtml(item.fileName || "Файл")}</strong><p class="msg-time">${escapeHtml(formatFileSize(item.fileSize) || "Документ")} · ${formatTime(item.createdAt)}</p></div><div class="file-box-actions"><a class="ghost compact-btn" href="${escapeHtml(item.fileUrl)}" target="_blank" rel="noopener noreferrer">Открыть</a><button class="ghost compact-btn" type="button" data-copy-file-link="${escapeHtml(item.fileUrl)}">Копия</button></div></div>`;
 }
 
 
@@ -2808,7 +2865,7 @@ async function openRoomProfileSheet(roomId, initialTab = "info") {
         .join("")}</div>`
     : `<div class="settings-empty"><strong>Пусто</strong><p class="msg-time">Изображений пока нет</p></div>`;
   const filesHtml = files.length
-    ? `<div class="menu-contacts search-results-list">${files.map((item) => `<a class="menu-contact-item settings-contact-card" href="${escapeHtml(item.fileUrl)}" target="_blank" rel="noopener noreferrer"><div><strong>${escapeHtml(item.fileName || "Файл")}</strong><p class="msg-time">${escapeHtml(formatFileSize(item.fileSize) || "Документ")} · ${formatTime(item.createdAt)}</p></div><span class="menu-badge">→</span></a>`).join("")}</div>`
+    ? `<div class="file-list">${files.map((item) => renderSharedFileCard(item)).join("")}</div>`
     : `<div class="settings-empty"><strong>Пусто</strong><p class="msg-time">Файлов пока нет</p></div>`;
 
   const linksHtml = links.length
@@ -3489,6 +3546,10 @@ function openMessageActions(messageId, x, y) {
       },
     },
   ];
+
+  if (message.poll && !message.deletedAt) {
+    items.splice(3, 0, { label: "Обзор опроса", onClick: async () => openPollOverviewSheet(message.poll) });
+  }
 
   if (canEdit) {
     items.push({ label: "Редактировать", onClick: async () => openEditMessageSheet(messageId) });
@@ -4700,7 +4761,7 @@ async function openDmProfileSheet(userId, initialTab = "info") {
     ? `<div class="menu-contacts search-results-list">${links.map((item) => `<a class="menu-contact-item settings-contact-card" href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer"><div><strong>${escapeHtml(item.url)}</strong><p class="msg-time">Сообщение #${item.id} · ${formatTime(item.createdAt)}</p></div><span class="menu-badge">→</span></a>`).join("")}</div>`
     : `<div class="settings-empty"><strong>Пусто</strong><p class="msg-time">Ссылок пока нет</p></div>`;
   const filesHtml = files.length
-    ? `<div class="menu-contacts search-results-list">${files.map((item) => `<a class="menu-contact-item settings-contact-card" href="${escapeHtml(item.fileUrl)}" target="_blank" rel="noopener noreferrer"><div><strong>${escapeHtml(item.fileName || "Файл")}</strong><p class="msg-time">${escapeHtml(formatFileSize(item.fileSize) || "Документ")} · ${formatTime(item.createdAt)}</p></div><span class="menu-badge">→</span></a>`).join("")}</div>`
+    ? `<div class="file-list">${files.map((item) => renderSharedFileCard(item)).join("")}</div>`
     : `<div class="settings-empty"><strong>Пусто</strong><p class="msg-time">Файлов пока нет</p></div>`;
 
   const statusLabel = presenceLabel(user);

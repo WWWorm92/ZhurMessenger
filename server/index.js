@@ -762,6 +762,27 @@ async function getPollWithOptions(pollId, userId) {
     [userId, pollId]
   );
 
+  const voters = await all(
+    `
+    SELECT pv.option_id, u.id, u.username, u.display_name
+    FROM poll_votes pv
+    JOIN users u ON u.id = pv.user_id
+    WHERE pv.poll_id = ?
+    ORDER BY pv.id ASC
+    `,
+    [pollId]
+  );
+  const votersMap = new Map();
+  for (const voter of voters) {
+    const list = votersMap.get(voter.option_id) || [];
+    list.push({
+      id: voter.id,
+      username: voter.username,
+      displayName: voter.display_name,
+    });
+    votersMap.set(voter.option_id, list);
+  }
+
   return {
     id: poll.id,
     question: poll.question,
@@ -774,6 +795,7 @@ async function getPollWithOptions(pollId, userId) {
       text: option.text,
       votes: Number(option.votes),
       votedByMe: Boolean(option.voted_by_me),
+      voters: votersMap.get(option.id) || [],
     })),
   };
 }

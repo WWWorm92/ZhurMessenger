@@ -1541,10 +1541,60 @@ button {
 
 .poll-option {
   border: 1px solid rgba(138, 177, 210, 0.34);
-  border-radius: 8px;
+  border-radius: 10px;
   background: rgba(255, 255, 255, 0.84);
-  padding: 6px 8px;
+  padding: 8px 10px;
   text-align: left;
+  display: grid;
+  gap: 6px;
+}
+
+.poll-option-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.poll-progress {
+  height: 7px;
+  border-radius: 999px;
+  background: rgba(126, 167, 203, 0.18);
+  overflow: hidden;
+}
+
+.poll-progress span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #69b8ff, #2f94f3);
+}
+
+.poll-votes-meta {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.poll-overview-card {
+  border: 1px solid rgba(138, 177, 210, 0.28);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.66);
+  padding: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.compact-list {
+  gap: 6px;
+}
+
+.member-preview-item.compact {
+  padding: 8px 10px;
+  box-shadow: none;
+}
+
+.compact-empty {
+  padding: 10px 12px;
 }
 
 .poll-option.voted {
@@ -2559,6 +2609,11 @@ body[data-theme="dark"] .member-preview-item.banned {
 body[data-theme="dark"] .member-preview-item.request {
   background: linear-gradient(180deg, rgba(32, 58, 81, 0.78), rgba(27, 49, 69, 0.7));
   border-color: rgba(104, 162, 209, 0.3);
+}
+
+body[data-theme="dark"] .poll-overview-card {
+  background: rgba(29, 48, 65, 0.78);
+  border-color: rgba(102, 143, 177, 0.28);
 }
 
 body[data-theme="dark"] .file-box {
