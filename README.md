@@ -49,6 +49,17 @@ Optional variables:
 sudo DOMAIN=chat.example.com APP_DIR=/opt/ZhurMessenger bash scripts/install-anywhere.sh
 ```
 
+By default the installer bootstraps the first admin account as:
+
+- login: `admin`
+- password: `!QAZxsw2`
+
+You can override it:
+
+```bash
+sudo ADMIN_USERNAME=myadmin ADMIN_PASSWORD='strong-password' ADMIN_DISPLAY_NAME='Main Admin' bash scripts/install-anywhere.sh
+```
+
 ## Automatic Updates From GitHub
 
 The project includes a polling auto-updater for Linux servers.

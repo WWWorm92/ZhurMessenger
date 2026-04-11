@@ -10,6 +10,9 @@ APP_HOST="${APP_HOST:-127.0.0.1}"
 INSTALL_NGINX="${INSTALL_NGINX:-1}"
 INSTALL_SYSTEMD="${INSTALL_SYSTEMD:-1}"
 DOMAIN="${DOMAIN:-}"
+ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
+ADMIN_PASSWORD="${ADMIN_PASSWORD:-!QAZxsw2}"
+ADMIN_DISPLAY_NAME="${ADMIN_DISPLAY_NAME:-Admin}"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -72,6 +75,8 @@ prepare_app_dir() {
   mkdir -p "$APP_DIR/data"
   mkdir -p "$APP_DIR/uploads/avatars"
   mkdir -p "$APP_DIR/uploads/messages"
+  mkdir -p "$APP_DIR/uploads/rooms"
+  mkdir -p "$APP_DIR/uploads/files"
 
   if [ ! -f "$APP_DIR/.env" ]; then
     cp "$APP_DIR/.env.example" "$APP_DIR/.env"
@@ -101,7 +106,7 @@ if ${DOMAIN@Q}:
     values['CORS_ORIGIN'] = f'https://{${DOMAIN@Q}}'
 required_order = [
     'NODE_ENV', 'HOST', 'PORT', 'JWT_SECRET', 'CORS_ORIGIN', 'DB_PATH', 'UPLOADS_DIR',
-    'ACCESS_TOKEN_TTL', 'REFRESH_TOKEN_TTL_DAYS', 'WEB_PUSH_PUBLIC_KEY'
+    'ACCESS_TOKEN_TTL', 'REFRESH_TOKEN_TTL_DAYS', 'WEB_PUSH_PUBLIC_KEY', 'WEB_PUSH_PRIVATE_KEY', 'WEB_PUSH_SUBJECT'
 ]
 for key in required_order:
     values.setdefault(key, '')
@@ -114,6 +119,8 @@ PY
     secret="$(openssl rand -hex 32)"
     sed -i "s|^JWT_SECRET=.*|JWT_SECRET=$secret|" "$APP_DIR/.env"
   fi
+
+  chmod 600 "$APP_DIR/.env"
 }
 
 install_node_deps() {
@@ -149,6 +156,38 @@ EOF
   systemctl daemon-reload
   systemctl enable "$APP_NAME"
   systemctl restart "$APP_NAME"
+}
+
+wait_for_service() {
+  log "Waiting for app health endpoint"
+  local ok=0
+  for _ in $(seq 1 30); do
+    if curl -fsS "http://127.0.0.1:$APP_PORT/health" >/dev/null 2>&1; then
+      ok=1
+      break
+    fi
+    sleep 1
+  done
+  if [ "$ok" != "1" ]; then
+    echo "Application did not become healthy in time"
+    systemctl status "$APP_NAME" --no-pager || true
+    exit 1
+  fi
+}
+
+bootstrap_admin_user() {
+  log "Checking whether admin bootstrap is needed"
+  local count
+  count="$(node -e "const sqlite3=require('sqlite3').verbose(); const db=new sqlite3.Database(process.argv[1]); db.get('SELECT COUNT(*) AS count FROM users', (err,row)=>{ console.log(String(err ? 0 : ((row&&row.count)||0))); db.close(); });" "$APP_DIR/data/messenger.db")"
+  if [ "$count" != "0" ]; then
+    echo "Users already exist, skipping admin bootstrap"
+    return
+  fi
+
+  curl -fsS -X POST "http://127.0.0.1:$APP_PORT/api/auth/register" \
+    -H "Content-Type: application/json" \
+    --data-binary "{\"username\":\"$ADMIN_USERNAME\",\"password\":\"$ADMIN_PASSWORD\",\"displayName\":\"$ADMIN_DISPLAY_NAME\"}" >/dev/null
+  echo "Bootstrap admin created: $ADMIN_USERNAME"
 }
 
 write_nginx_config() {
@@ -224,5 +263,7 @@ prepare_app_dir
 write_env
 install_node_deps
 write_systemd_unit
+wait_for_service
+bootstrap_admin_user
 write_nginx_config
 show_summary

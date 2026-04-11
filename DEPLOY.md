@@ -25,12 +25,24 @@ sudo DOMAIN=chat.example.com APP_DIR=/opt/ZhurMessenger bash scripts/install-any
 - ставит npm-зависимости
 - создает `systemd` unit
 - создает nginx-конфиг
+- если база пустая, создает первого администратора автоматически
 
 После скрипта тебе останется:
 
 - скопировать старую БД
 - скопировать `uploads/`
 - при наличии домена включить HTTPS через certbot
+
+По умолчанию первый администратор создается как:
+
+- `admin`
+- пароль `!QAZxsw2`
+
+Можно переопределить так:
+
+```bash
+sudo ADMIN_USERNAME=myadmin ADMIN_PASSWORD='strong-password' ADMIN_DISPLAY_NAME='Main Admin' bash scripts/install-anywhere.sh
+```
 
 ## Автоматические обновления с GitHub
 
