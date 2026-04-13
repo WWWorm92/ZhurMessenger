@@ -115,6 +115,8 @@ Production security notes:
 
 Full migration guide: `DEPLOY.md`
 
+User-facing guide in Russian: `USER_GUIDE_RU.md`
+
 ### Option 1: Plain Node + reverse proxy
 
 Best for VPS, Raspberry Pi, home server.
