@@ -717,6 +717,11 @@ function isNotificationsAvailable() {
   return "Notification" in window;
 }
 
+function isIOSBrowser() {
+  const ua = navigator.userAgent || "";
+  return /iPhone|iPad|iPod/i.test(ua);
+}
+
 function urlBase64ToUint8Array(base64String) {
   const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
   const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
@@ -730,6 +735,15 @@ function urlBase64ToUint8Array(base64String) {
 
 async function registerServiceWorkerIfNeeded() {
   if (!("serviceWorker" in navigator)) {
+    return null;
+  }
+  if (isIOSBrowser()) {
+    try {
+      const registrations = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(registrations.map((registration) => registration.unregister()));
+    } catch {
+      // ignore cleanup errors on iOS
+    }
     return null;
   }
   if (state.swRegistration) {
