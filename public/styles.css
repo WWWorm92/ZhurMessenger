@@ -1,4 +1,7 @@
 :root {
+  --app-height: 100vh;
+  --app-top: 0px;
+  --keyboard-inset: 0px;
   --bg-top: #edf6ff;
   --bg-mid: #dbe9f7;
   --bg-bottom: #d3e0ef;
@@ -450,6 +453,21 @@ button {
 
 .chat-head-actions .ghost {
   min-height: 36px;
+}
+
+.selection-icon-btn {
+  width: 38px;
+  min-width: 38px;
+  height: 38px;
+  padding: 0;
+  border-radius: 12px;
+  display: inline-grid;
+  place-items: center;
+}
+
+.selection-icon-btn.active {
+  border-color: rgba(74, 159, 230, 0.44);
+  background: linear-gradient(180deg, rgba(230, 244, 255, 0.94), rgba(218, 238, 255, 0.88));
 }
 
 .chat-head.selection-mode .chat-head-main {
@@ -2438,7 +2456,6 @@ body[data-theme="dark"] .attach-menu button,
 body[data-theme="dark"] .emoji-btn:hover,
 body[data-theme="dark"] .poll-box,
 body[data-theme="dark"] .poll-option,
-body[data-theme="dark"] .side-menu,
 body[data-theme="dark"] .menu-link,
 body[data-theme="dark"] .settings-list,
 body[data-theme="dark"] .menu-contacts,
@@ -3057,14 +3074,35 @@ body[data-theme="dark"] .presence {
 
   body {
     overflow: hidden;
+    height: var(--app-height);
+    position: fixed;
+    inset: 0;
+    width: 100%;
+  }
+
+  html,
+  .root {
+    height: var(--app-height);
+    min-height: var(--app-height);
+    overflow: hidden;
+  }
+
+  .root {
+    position: fixed;
+    left: 0;
+    right: 0;
+    top: var(--app-top);
+    width: 100%;
   }
 
   .chat-view {
     padding: 0;
+    min-height: var(--app-height);
+    height: var(--app-height);
   }
 
   .app-shell {
-    height: 100vh;
+    height: var(--app-height);
     grid-template-columns: 1fr;
     gap: 0;
   }
@@ -3072,8 +3110,15 @@ body[data-theme="dark"] .presence {
   .center-panel {
     border-radius: 0;
     border: none;
-    height: 100dvh;
-    grid-template-rows: auto minmax(0, 1fr) auto;
+    height: var(--app-height);
+    position: fixed;
+    left: 0;
+    right: 0;
+    top: var(--app-top);
+    display: block;
+    overflow: hidden;
+    overscroll-behavior: none;
+    z-index: 1;
   }
 
   .left-panel {
@@ -3110,8 +3155,10 @@ body[data-theme="dark"] .presence {
   }
 
   .chat-head {
-    position: sticky;
-    top: 0;
+    position: fixed;
+    top: var(--app-top);
+    left: 0;
+    right: 0;
     z-index: 3;
     background: rgba(255, 255, 255, 0.72);
     backdrop-filter: blur(10px);
@@ -3145,8 +3192,17 @@ body[data-theme="dark"] .presence {
     flex-shrink: 0;
   }
 
+  .update-banner {
+    position: absolute;
+    top: calc(var(--chat-head-height, 58px) - 4px);
+    left: 8px;
+    right: 8px;
+    z-index: 3;
+    margin: 0;
+  }
+
   .left-panel {
-    padding: 10px 10px max(12px, env(safe-area-inset-bottom));
+    padding: max(10px, env(safe-area-inset-top)) 10px max(12px, env(safe-area-inset-bottom));
   }
 
   .room-tools {
@@ -3220,7 +3276,14 @@ body[data-theme="dark"] .presence {
   }
 
   .messages {
-    padding: 8px 6px 96px;
+    position: absolute;
+    top: var(--chat-head-height, 58px);
+    left: 0;
+    right: 0;
+    bottom: var(--composer-height, 72px);
+    padding: 8px 6px 12px;
+    overflow-y: auto;
+    overscroll-behavior: none;
   }
 
   .jump-bottom {
@@ -3270,14 +3333,40 @@ body[data-theme="dark"] .presence {
   }
 
   .composer {
-    position: relative;
-    bottom: auto;
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
     z-index: 4;
     background: rgba(255, 255, 255, 0.86);
     backdrop-filter: blur(10px);
     border-top: 1px solid var(--line);
     padding: 8px 8px calc(max(10px, env(safe-area-inset-bottom)) + 2px);
     padding-bottom: max(10px, env(safe-area-inset-bottom));
+  }
+
+  body.keyboard-open .chat-view,
+  body.keyboard-open .app-shell,
+  body.keyboard-open .center-panel {
+    height: var(--app-height);
+    min-height: var(--app-height);
+  }
+
+  body.keyboard-open .messages {
+    bottom: var(--composer-height, 72px);
+    padding-bottom: 4px;
+  }
+
+  body.keyboard-open .composer {
+    bottom: 0;
+  }
+
+  body.keyboard-open .composer {
+    padding-bottom: 6px;
+  }
+
+  body.keyboard-open .empty-chat-state {
+    margin-bottom: 0;
   }
 
   .composer-row .icon-btn,
