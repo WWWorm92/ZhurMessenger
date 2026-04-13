@@ -1,4 +1,4 @@
-const SW_VERSION = "pulse-sw-v2";
+const SW_VERSION = "pulse-sw-v4";
 const APP_SHELL = [
   "/",
   "/index.html",
@@ -34,6 +34,10 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
+  if (url.pathname.startsWith("/socket.io/")) {
+    return;
+  }
+
   if (req.mode === "navigate") {
     event.respondWith(
       fetch(req).catch(async () => {
@@ -57,7 +61,7 @@ self.addEventListener("fetch", (event) => {
       if (cached) {
         return cached;
       }
-      throw error;
+      return Response.error();
     }
   })());
 });

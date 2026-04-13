@@ -2,7 +2,7 @@ const EMOJIS = ["😀", "😎", "😂", "😍", "🥳", "👍", "🔥", "❤️"
 const REGISTRATION_ENABLED = false;
 const DOM_WINDOW_SIZE = 220;
 const DOM_WINDOW_STEP = 90;
-const APP_VERSION = "2026.03.30-1";
+const APP_VERSION = "2026.04.13-3";
 
 const state = {
   mode: "login",
@@ -736,7 +736,7 @@ async function registerServiceWorkerIfNeeded() {
     return state.swRegistration;
   }
   try {
-    state.swRegistration = await navigator.serviceWorker.register("/sw.js");
+    state.swRegistration = await navigator.serviceWorker.register(`/sw.js?v=${APP_VERSION}`, { updateViaCache: "none" });
     return state.swRegistration;
   } catch (error) {
     return null;
