@@ -31,6 +31,7 @@ const state = {
   renderWindowStartByChatKey: new Map(),
   selectionMode: false,
   selectedMessageIds: new Set(),
+  draftsByChatKey: new Map(),
   pendingImage: null,
   replyToMessageId: null,
   onlineIds: new Set(),
@@ -47,6 +48,8 @@ const typingClearTimers = new Map();
 let renderScheduled = false;
 let renderScheduledForceBottom = false;
 let refreshInFlight = null;
+let suppressContextMenuCloseUntil = 0;
+let suppressContextMenuOpenUntil = 0;
 
 const els = {
   overlay: document.getElementById("overlay"),
@@ -235,6 +238,7 @@ function allLoadedMessagesSelected() {
 function refreshUpdateBanner() {
   const hasUpdate = Boolean(state.remoteVersion && state.remoteVersion !== APP_VERSION);
   els.updateBanner?.classList.toggle("hidden", !hasUpdate);
+  syncMobileShellMetrics();
 }
 
 async function checkForAppUpdate() {
@@ -246,6 +250,26 @@ async function checkForAppUpdate() {
   } catch (error) {
     // ignore update check errors
   }
+}
+
+function syncAppViewportHeight() {
+  const height = window.visualViewport?.height || window.innerHeight;
+  const offsetTop = window.visualViewport?.offsetTop || 0;
+  const keyboardInset = Math.max(0, window.innerHeight - height - offsetTop);
+  document.documentElement.style.setProperty("--app-height", `${Math.round(height)}px`);
+  document.documentElement.style.setProperty("--app-top", `${Math.round(offsetTop)}px`);
+  document.documentElement.style.setProperty("--keyboard-inset", `${Math.round(keyboardInset)}px`);
+  const keyboardOpen = document.activeElement === els.messageInput && height < window.screen.height * 0.82;
+  document.body.classList.toggle("keyboard-open", keyboardOpen);
+  syncMobileShellMetrics();
+}
+
+function syncMobileShellMetrics() {
+  const headerHeight = document.querySelector(".chat-head")?.offsetHeight || 0;
+  const bannerHeight = els.updateBanner && !els.updateBanner.classList.contains("hidden") ? els.updateBanner.offsetHeight + 8 : 0;
+  const composerHeight = document.querySelector(".composer")?.offsetHeight || 0;
+  document.documentElement.style.setProperty("--chat-head-height", `${headerHeight + bannerHeight}px`);
+  document.documentElement.style.setProperty("--composer-height", `${composerHeight}px`);
 }
 
 window.alert = (message) => {
@@ -1005,9 +1029,11 @@ function closeSideMenu() {
 }
 
 function syncOverlay() {
+  const leftPanelNeedsOverlay = els.leftPanel.classList.contains("open") && window.innerWidth > 900;
+  const sideMenuNeedsOverlay = els.sideMenu.classList.contains("open") && window.innerWidth > 900;
   const visible =
-    els.leftPanel.classList.contains("open") ||
-    els.sideMenu.classList.contains("open") ||
+    leftPanelNeedsOverlay ||
+    sideMenuNeedsOverlay ||
     !els.sheet.classList.contains("hidden");
   els.overlay.classList.toggle("hidden", !visible);
 }
@@ -1098,7 +1124,7 @@ function isTouchDevice() {
   return window.matchMedia("(pointer: coarse)").matches || "ontouchstart" in window;
 }
 
-function attachLongPress(element, onPress) {
+function attachLongPress(element, onPress, onTap = null) {
   if (!isTouchDevice()) {
     return;
   }
@@ -1106,6 +1132,9 @@ function attachLongPress(element, onPress) {
   let timer = null;
   let startX = 0;
   let startY = 0;
+  let moved = false;
+  let longPressed = false;
+  const moveThreshold = 18;
 
   const clear = () => {
     if (timer) {
@@ -1120,8 +1149,14 @@ function attachLongPress(element, onPress) {
     }
     startX = event.touches[0].clientX;
     startY = event.touches[0].clientY;
+    moved = false;
+    longPressed = false;
     timer = setTimeout(() => {
       timer = null;
+      longPressed = true;
+      element.dataset.skipClickUntil = String(Date.now() + 900);
+      suppressContextMenuCloseUntil = Date.now() + 500;
+      suppressContextMenuOpenUntil = Date.now() + 900;
       onPress(startX, startY);
     }, 520);
   }, { passive: true });
@@ -1132,12 +1167,23 @@ function attachLongPress(element, onPress) {
     }
     const dx = Math.abs(event.touches[0].clientX - startX);
     const dy = Math.abs(event.touches[0].clientY - startY);
-    if (dx > 10 || dy > 10) {
+    if (dx > moveThreshold || dy > moveThreshold) {
+      moved = true;
       clear();
     }
   }, { passive: true });
 
-  element.addEventListener("touchend", clear, { passive: true });
+  element.addEventListener("touchend", (event) => {
+    clear();
+    if (onTap && !moved && !longPressed) {
+      const endX = event.changedTouches?.[0]?.clientX ?? startX;
+      const endY = event.changedTouches?.[0]?.clientY ?? startY;
+      element.dataset.skipClickUntil = String(Date.now() + 900);
+      suppressContextMenuCloseUntil = Date.now() + 500;
+      suppressContextMenuOpenUntil = Date.now() + 500;
+      onTap(endX, endY);
+    }
+  }, { passive: true });
   element.addEventListener("touchcancel", clear, { passive: true });
 }
 
@@ -1317,6 +1363,34 @@ function clearReply() {
   els.composeMeta.classList.add("hidden");
   els.composeMetaText.textContent = "";
   delete els.composeMetaText.dataset.replyMsgId;
+}
+
+function saveCurrentDraft() {
+  const key = selectedChatKey();
+  if (!key) return;
+  const value = els.messageInput.value || "";
+  if (value.trim()) {
+    state.draftsByChatKey.set(key, value);
+  } else {
+    state.draftsByChatKey.delete(key);
+  }
+}
+
+function restoreComposerDraft() {
+  const key = selectedChatKey();
+  els.messageInput.value = key ? (state.draftsByChatKey.get(key) || "") : "";
+}
+
+function clearComposerInput({ clearDraft = true } = {}) {
+  if (clearDraft) {
+    const key = selectedChatKey();
+    if (key) {
+      state.draftsByChatKey.delete(key);
+    }
+  }
+  els.messageInput.value = "";
+  els.attachMenu.classList.add("hidden");
+  els.emojiPanel.classList.add("hidden");
 }
 
 async function jumpToMessageInCurrentChat(id, { close = false } = {}) {
@@ -2013,8 +2087,24 @@ function formatFileSize(bytes) {
   return `${(value / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+function normalizeFileName(name) {
+  const raw = String(name || "");
+  if (!raw) {
+    return "Файл";
+  }
+  if (!/[ÐÑ]/.test(raw)) {
+    return raw;
+  }
+  try {
+    const bytes = Uint8Array.from(raw, (char) => char.charCodeAt(0));
+    return new TextDecoder("utf-8").decode(bytes);
+  } catch {
+    return raw;
+  }
+}
+
 function fileKind(name) {
-  const ext = String(name || "").toLowerCase().split('.').pop() || "";
+  const ext = normalizeFileName(name).toLowerCase().split('.').pop() || "";
   if (["pdf"].includes(ext)) return "PDF";
   if (["doc", "docx"].includes(ext)) return "DOC";
   if (["xls", "xlsx", "csv"].includes(ext)) return "XLS";
@@ -2027,12 +2117,13 @@ function renderFileMessage(message) {
   if (!message.fileUrl || message.deletedAt) {
     return "";
   }
-  const kind = fileKind(message.fileName);
+  const fileName = normalizeFileName(message.fileName);
+  const kind = fileKind(fileName);
   return `
     <div class="file-box">
       <div class="file-kind-badge kind-${escapeHtml(kind.toLowerCase())}">${escapeHtml(kind)}</div>
       <div class="file-box-main">
-        <strong>${escapeHtml(message.fileName || "Файл")}</strong>
+        <strong>${escapeHtml(fileName)}</strong>
         <p class="msg-time">${escapeHtml(formatFileSize(message.fileSize) || "Документ")} · документ</p>
       </div>
       <div class="file-box-actions">
@@ -2044,8 +2135,9 @@ function renderFileMessage(message) {
 }
 
 function renderSharedFileCard(item) {
-  const kind = fileKind(item.fileName);
-  return `<div class="file-box shared"><div class="file-kind-badge kind-${escapeHtml(kind.toLowerCase())}">${escapeHtml(kind)}</div><div class="file-box-main"><strong>${escapeHtml(item.fileName || "Файл")}</strong><p class="msg-time">${escapeHtml(formatFileSize(item.fileSize) || "Документ")} · ${formatTime(item.createdAt)}</p></div><div class="file-box-actions"><a class="ghost compact-btn" href="${escapeHtml(item.fileUrl)}" target="_blank" rel="noopener noreferrer">Открыть</a><button class="ghost compact-btn" type="button" data-copy-file-link="${escapeHtml(item.fileUrl)}">Копия</button></div></div>`;
+  const fileName = normalizeFileName(item.fileName);
+  const kind = fileKind(fileName);
+  return `<div class="file-box shared"><div class="file-kind-badge kind-${escapeHtml(kind.toLowerCase())}">${escapeHtml(kind)}</div><div class="file-box-main"><strong>${escapeHtml(fileName)}</strong><p class="msg-time">${escapeHtml(formatFileSize(item.fileSize) || "Документ")} · ${formatTime(item.createdAt)}</p></div><div class="file-box-actions"><a class="ghost compact-btn" href="${escapeHtml(item.fileUrl)}" target="_blank" rel="noopener noreferrer">Открыть</a><button class="ghost compact-btn" type="button" data-copy-file-link="${escapeHtml(item.fileUrl)}">Копия</button></div></div>`;
 }
 
 
@@ -2194,20 +2286,42 @@ function renderMessages({ forceBottom = false } = {}) {
     `;
     node.addEventListener("contextmenu", (event) => {
       event.preventDefault();
-      openMessageActions(message.id, event.clientX, event.clientY);
-    });
-    attachLongPress(node, (x, y) => {
-      if (!state.selectionMode) {
-        toggleMessageSelection(message.id);
+      if (Date.now() < suppressContextMenuOpenUntil) {
         return;
       }
-      openMessageActions(message.id, x, y);
+      openMessageActions(message.id, event.clientX, event.clientY);
     });
+    attachLongPress(
+      node,
+      () => {
+        toggleMessageSelection(message.id);
+      },
+      (x, y) => {
+        if (!state.selectionMode) {
+          showContextMenu(x, y, buildMessageActionItems(message.id), { forceFloating: true });
+        }
+      }
+    );
     node.addEventListener("click", (event) => {
+      const interactiveTarget = event.target.closest("a, button, audio, input, textarea, select");
+      if (interactiveTarget) {
+        return;
+      }
+      const skipUntil = Number(node.dataset.skipClickUntil || 0);
+      if (skipUntil > Date.now()) {
+        return;
+      }
       if (state.selectionMode) {
         event.preventDefault();
         toggleMessageSelection(message.id);
+        return;
       }
+      if (isTouchDevice()) {
+        const rect = node.getBoundingClientRect();
+        showContextMenu(rect.right, rect.bottom + 6, buildMessageActionItems(message.id), { forceFloating: true });
+        return;
+      }
+      toggleMessageSelection(message.id);
     });
     els.messages.appendChild(node);
     if (isNewlyArrived) {
@@ -2352,6 +2466,7 @@ function updateChatHeader() {
     els.chatHeadAvatar.innerHTML = iconMarkup("chat");
     els.messageInput.disabled = true;
     els.sendBtn.disabled = true;
+    syncMobileShellMetrics();
     return;
   }
 
@@ -2363,12 +2478,14 @@ function updateChatHeader() {
     els.chatHeadAvatar.innerHTML = iconMarkup("chat");
     els.selectionAllBtn?.classList.remove("hidden");
     if (els.selectionAllBtn) {
-      els.selectionAllBtn.textContent = allLoadedMessagesSelected() ? "Снять все" : "Выбрать все";
+      els.selectionAllBtn.setAttribute("aria-label", allLoadedMessagesSelected() ? "Снять все" : "Выбрать все");
+      els.selectionAllBtn.classList.toggle("active", allLoadedMessagesSelected());
     }
     els.selectionCopyBtn?.classList.remove("hidden");
     els.selectionForwardBtn?.classList.remove("hidden");
     els.selectionDeleteBtn?.classList.remove("hidden");
     els.selectionClearBtn?.classList.remove("hidden");
+    syncMobileShellMetrics();
     return;
   }
 
@@ -2385,6 +2502,7 @@ function updateChatHeader() {
     els.chatHeadAvatar.innerHTML = avatarMarkup(user);
     els.messageInput.disabled = false;
     els.sendBtn.disabled = false;
+    syncMobileShellMetrics();
     return;
   }
 
@@ -2407,6 +2525,7 @@ function updateChatHeader() {
   if (room.joined && room.canPost === false) {
     els.chatStatus.textContent = resolveTypingStatus("Писать могут только админы комнаты");
   }
+  syncMobileShellMetrics();
 }
 
 async function loadDmMessages(userId, { beforeId = null, append = false } = {}) {
@@ -2458,14 +2577,17 @@ async function loadRoomMessages(roomId, { beforeId = null, append = false } = {}
 
 async function selectDm(userId) {
   try {
+    saveCurrentDraft();
     stopTypingEmit();
     clearPendingImage();
     clearReply();
+    clearComposerInput({ clearDraft: false });
     state.selected = { type: "dm", id: userId };
     clearUnseenForKey(selectedChatKey());
     renderEntityList();
     updateChatHeader();
     await loadDmMessages(userId);
+    restoreComposerDraft();
     renderEntityList();
     updateChatHeader();
     renderMessages({ forceBottom: true });
@@ -2477,8 +2599,10 @@ async function selectDm(userId) {
 
 async function selectRoom(roomId) {
   try {
+    saveCurrentDraft();
     stopTypingEmit();
     clearPendingImage();
+    clearComposerInput({ clearDraft: false });
     const room = state.rooms.find((item) => item.id === roomId);
     if (!room) {
       return;
@@ -2515,6 +2639,7 @@ async function selectRoom(roomId) {
     renderEntityList();
     updateChatHeader();
     await loadRoomMessages(roomId);
+    restoreComposerDraft();
     renderEntityList();
     updateChatHeader();
     renderMessages({ forceBottom: true });
@@ -3517,10 +3642,10 @@ function patchPoll(poll) {
   }
 }
 
-function openMessageActions(messageId, x, y) {
+function buildMessageActionItems(messageId) {
   const message = getMessageById(messageId);
   if (!message) {
-    return;
+    return [];
   }
   const mine = message.senderId === state.me.id;
   const canEdit = mine && !message.deletedAt;
@@ -3559,6 +3684,14 @@ function openMessageActions(messageId, x, y) {
     items.push({ label: "Удалить", danger: true, onClick: async () => deleteMessage(messageId) });
   }
 
+  return items;
+}
+
+function openMessageActions(messageId, x, y) {
+  const items = buildMessageActionItems(messageId);
+  if (!items.length) {
+    return;
+  }
   showContextMenu(x, y, items);
 }
 
@@ -5094,13 +5227,15 @@ async function startSession() {
     }
   }
 
-  if (!state.selected && state.users.length) {
-    state.selected = { type: "dm", id: state.users[0].id };
-  }
-
   setListMode("dm");
   renderEntityList();
   updateChatHeader();
+
+  if (window.innerWidth <= 900 && !state.selected) {
+    openLeftPanel();
+  } else {
+    closeLeftPanel();
+  }
 
   if (state.selected?.type === "dm") {
     await loadDmMessages(state.selected.id);
@@ -5426,14 +5561,14 @@ els.messageForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   try {
     stopTypingEmit();
-    if (state.pendingImage?.file) {
+  if (state.pendingImage?.file) {
       await sendImageMessage(state.pendingImage.file);
       clearPendingImage();
       renderMessages({ forceBottom: true });
       scrollMessagesToBottom(true);
     } else {
       await sendTextMessage(els.messageInput.value);
-      els.messageInput.value = "";
+      clearComposerInput();
       els.messageInput.focus();
       scrollMessagesToBottom(true);
     }
@@ -5443,6 +5578,7 @@ els.messageForm.addEventListener("submit", async (event) => {
 });
 
 els.messageInput.addEventListener("input", () => {
+  saveCurrentDraft();
   onComposerInputChanged();
 });
 
@@ -5526,6 +5662,9 @@ els.jumpBottomBtn?.addEventListener("click", () => {
 });
 
 document.addEventListener("click", (event) => {
+  if (Date.now() < suppressContextMenuCloseUntil) {
+    return;
+  }
   const insideContext = els.contextMenu.contains(event.target);
   if (!insideContext) {
     hideContextMenu();
@@ -5565,6 +5704,7 @@ applyTheme(state.theme);
 setMode("login");
 refreshListFiltersUI();
 loadPublicRoomPreviewIfNeeded().catch(() => {});
+syncAppViewportHeight();
 
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker.addEventListener("message", async (event) => {
@@ -5573,6 +5713,30 @@ if ("serviceWorker" in navigator) {
     }
   });
 }
+
+window.addEventListener("resize", syncAppViewportHeight);
+window.visualViewport?.addEventListener("resize", syncAppViewportHeight);
+window.visualViewport?.addEventListener("scroll", syncAppViewportHeight);
+window.addEventListener("scroll", () => {
+  if (document.body.classList.contains("keyboard-open")) {
+    window.scrollTo(0, 0);
+  }
+}, { passive: true });
+
+els.messageInput.addEventListener("focus", () => {
+  setTimeout(() => {
+    syncAppViewportHeight();
+    window.scrollTo(0, 0);
+  }, 50);
+});
+
+els.messageInput.addEventListener("blur", () => {
+  setTimeout(() => {
+    syncAppViewportHeight();
+    document.body.classList.remove("keyboard-open");
+    window.scrollTo(0, 0);
+  }, 50);
+});
 
 fetch("/api/auth/refresh", { method: "POST", credentials: "same-origin" })
   .then((response) => response.json().then((data) => ({ response, data })))

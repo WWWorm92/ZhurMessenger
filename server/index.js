@@ -547,6 +547,18 @@ function extensionFromMime(mimeType) {
   return "";
 }
 
+function normalizeUploadedFilename(name) {
+  const raw = String(name || "").trim();
+  if (!raw) {
+    return "file";
+  }
+  try {
+    return Buffer.from(raw, "latin1").toString("utf8");
+  } catch {
+    return raw;
+  }
+}
+
 const ALLOWED_IMAGE_MIME_TYPES = new Set([
   "image/jpeg",
   "image/png",
@@ -1601,7 +1613,7 @@ app.post(
       }
       res.status(201).json({
         fileUrl: publicFilePath("files", req.file.filename),
-        fileName: req.file.originalname,
+        fileName: normalizeUploadedFilename(req.file.originalname),
         fileSize: req.file.size,
       });
     } catch (error) {
