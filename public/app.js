@@ -5483,8 +5483,22 @@ els.logoutBtn.addEventListener("click", async () => {
 });
 
 els.composeMetaCancel.addEventListener("click", () => clearReply());
-els.reloadAppBtn?.addEventListener("click", () => {
-  window.location.reload();
+els.reloadAppBtn?.addEventListener("click", async () => {
+  try {
+    if ("serviceWorker" in navigator) {
+      const registrations = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(registrations.map((registration) => registration.update().catch(() => null)));
+    }
+    if (window.caches?.keys) {
+      const keys = await caches.keys();
+      await Promise.all(keys.map((key) => caches.delete(key)));
+    }
+  } catch {
+    // ignore cache cleanup issues
+  }
+  const url = new URL(window.location.href);
+  url.searchParams.set("v", String(Date.now()));
+  window.location.replace(url.toString());
 });
 els.selectionCopyBtn?.addEventListener("click", async () => {
   await copySelectedMessages();
