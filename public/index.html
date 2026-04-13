@@ -13,6 +13,27 @@
     />
     <link rel="manifest" href="/manifest.webmanifest?v=2026.04.13-3" />
     <link rel="stylesheet" href="/styles.css?v=2026.04.13-3" />
+    <script>
+      (function () {
+        var ua = navigator.userAgent || "";
+        var isIOS = /iPhone|iPad|iPod/i.test(ua);
+        if (!isIOS || !("serviceWorker" in navigator)) return;
+        var key = "ios-sw-reset-v1";
+        if (sessionStorage.getItem(key)) return;
+        sessionStorage.setItem(key, "1");
+        navigator.serviceWorker.getRegistrations().then(function (registrations) {
+          return Promise.all(registrations.map(function (registration) { return registration.unregister(); }));
+        }).then(function () {
+          if (window.caches && caches.keys) {
+            return caches.keys().then(function (keys) {
+              return Promise.all(keys.map(function (k) { return caches.delete(k); }));
+            });
+          }
+        }).finally(function () {
+          setTimeout(function () { window.location.reload(); }, 50);
+        });
+      })();
+    </script>
   </head>
   <body>
     <div class="ambient ambient-a"></div>
