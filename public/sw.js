@@ -1,12 +1,12 @@
-const SW_VERSION = "pulse-sw-v4";
+const SW_VERSION = "pulse-sw-v5";
 const APP_SHELL = [
   "/",
   "/index.html",
   "/styles.css",
   "/app.js",
   "/manifest.webmanifest",
-  "/icon-192.svg",
-  "/icon-512.svg",
+  "/icon-192.png",
+  "/icon-512.png",
 ];
 
 self.addEventListener("install", (event) => {
@@ -74,11 +74,11 @@ self.addEventListener("push", (event) => {
     payload = { body: event.data ? event.data.text() : "" };
   }
 
-  const title = payload.title || "Pulse Messenger";
+  const title = payload.title || "Zhuravlik";
   const options = {
     body: payload.body || "Новое сообщение",
-    icon: "/icon-192.svg",
-    badge: "/icon-192.svg",
+    icon: "/icon-192.png",
+    badge: "/icon-192.png",
     data: {
       url: payload.url || "/",
     },

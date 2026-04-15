@@ -2,7 +2,8 @@ const EMOJIS = ["😀", "😎", "😂", "😍", "🥳", "👍", "🔥", "❤️"
 const REGISTRATION_ENABLED = false;
 const DOM_WINDOW_SIZE = 220;
 const DOM_WINDOW_STEP = 90;
-const APP_VERSION = "2026.04.13-3";
+const APP_VERSION = "2026.04.13-25";
+const SUPPORT_USERNAME = "support";
 
 const state = {
   mode: "login",
@@ -79,6 +80,7 @@ const els = {
   menuAdminBtn: document.getElementById("menuAdminBtn"),
   menuSettingsBtn: document.getElementById("menuSettingsBtn"),
   menuContactsBtn: document.getElementById("menuContactsBtn"),
+  menuSupportBtn: document.getElementById("menuSupportBtn"),
   menuInvitesBtn: document.getElementById("menuInvitesBtn"),
   menuInvitesBadge: document.getElementById("menuInvitesBadge"),
   menuAboutBtn: document.getElementById("menuAboutBtn"),
@@ -109,6 +111,7 @@ const els = {
   selectionDeleteBtn: document.getElementById("selectionDeleteBtn"),
   selectionClearBtn: document.getElementById("selectionClearBtn"),
   jumpBottomBtn: document.getElementById("jumpBottomBtn"),
+  composerNotice: document.getElementById("composerNotice"),
   logoutBtn: document.getElementById("logoutBtn"),
   messages: document.getElementById("messages"),
   stickyDayLabel: document.getElementById("stickyDayLabel"),
@@ -173,6 +176,21 @@ function renderMessageText(text) {
   });
   html += escapeHtml(source.slice(lastIndex));
   return html;
+}
+
+function isSupportUser(user) {
+  return String(user?.username || "").toLowerCase() === SUPPORT_USERNAME;
+}
+
+function getSupportUser() {
+  return state.users.find((user) => isSupportUser(user)) || null;
+}
+
+function displayNameFor(entity) {
+  if (isSupportUser(entity)) {
+    return "Техподдержка";
+  }
+  return entity?.displayName || entity?.name || entity?.username || "User";
 }
 
 function showToast(message, type = "info") {
@@ -312,7 +330,10 @@ function initials(name) {
 
 function avatarMarkup(entity) {
   const image = escapeHtml(entity?.avatarUrl || "");
-  const name = escapeHtml(entity?.displayName || entity?.name || entity?.username || "User");
+  const name = escapeHtml(displayNameFor(entity));
+  if (isSupportUser(entity)) {
+    return `<span class="ui-icon support-avatar-glyph" aria-hidden="true">${iconSvg("support")}</span>`;
+  }
   if (image) {
     return `<img src="${image}" alt="${name}" />`;
   }
@@ -330,6 +351,7 @@ function iconSvg(name) {
     mute: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 14h3l4 3V7L8 10H5v4ZM17 10l4 4M21 10l-4 4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>',
     plus: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>',
     smile: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M9 10h.01M15 10h.01" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/><path d="M9 14c.8.9 1.8 1.3 3 1.3s2.2-.4 3-1.3" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    support: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 13.5V12a5.5 5.5 0 1 1 11 0v1.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><path d="M6.5 13.5A1.5 1.5 0 0 1 5 15H4.8A1.8 1.8 0 0 1 3 13.2v-.4A1.8 1.8 0 0 1 4.8 11H5a1.5 1.5 0 0 1 1.5 1.5v1Zm11 0A1.5 1.5 0 0 0 19 15h.2a1.8 1.8 0 0 0 1.8-1.8v-.4A1.8 1.8 0 0 0 19.2 11H19a1.5 1.5 0 0 0-1.5 1.5v1Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><path d="M9 18.5c.8.5 1.8.8 3 .8s2.2-.3 3-.8" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>',
     more: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="12" r="1.6" fill="currentColor"/><circle cx="12" cy="12" r="1.6" fill="currentColor"/><circle cx="18" cy="12" r="1.6" fill="currentColor"/></svg>',
     arrowRight: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 7l5 5-5 5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
     composeSend: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 13-6-3.5 12-4-4-5.5-2Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/></svg>',
@@ -377,6 +399,27 @@ function formatTime(value) {
     return "";
   }
   return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function formatChatListTime(value) {
+  const ms = asUtcMs(value);
+  if (!ms) {
+    return "";
+  }
+  const date = new Date(ms);
+  const now = new Date();
+  const isToday =
+    date.getFullYear() === now.getFullYear() &&
+    date.getMonth() === now.getMonth() &&
+    date.getDate() === now.getDate();
+  if (isToday) {
+    return date.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
+  }
+  const parts = date.toLocaleDateString("ru-RU", { day: "2-digit", month: "short" }).replace(".", "").split(" ");
+  if (parts.length >= 2) {
+    parts[1] = parts[1].charAt(0).toUpperCase() + parts[1].slice(1);
+  }
+  return parts.join(" ");
 }
 
 function formatDateTime(value) {
@@ -840,13 +883,13 @@ async function showLocalNotification({ title, body }) {
   if (registration?.showNotification) {
     registration.showNotification(title, {
       body,
-      icon: "/icon-192.svg",
-      badge: "/icon-192.svg",
+      icon: "/icon-192.png",
+      badge: "/icon-192.png",
       data: { url: "/" },
     });
     return;
   }
-  new Notification(title, { body, icon: "/icon-192.svg" });
+  new Notification(title, { body, icon: "/icon-192.png" });
 }
 
 async function uploadMessageImage(file) {
@@ -1510,7 +1553,11 @@ function refreshInvitationsButton() {
     return;
   }
   const count = invitationCount();
-  els.invitationsBtn.innerHTML = count > 0 ? `Приглашения <span class="btn-badge">${count > 99 ? "99+" : count}</span>` : "Приглашения";
+  const badge = els.invitationsBtn.querySelector(".btn-badge");
+  if (badge) {
+    badge.classList.toggle("hidden", count <= 0);
+    badge.textContent = count > 99 ? "99+" : String(count);
+  }
   if (els.menuInvitesBadge) {
     els.menuInvitesBadge.classList.toggle("hidden", count <= 0);
     els.menuInvitesBadge.textContent = count > 99 ? "99+" : String(count);
@@ -1554,6 +1601,9 @@ function passesListFilter(entry) {
 function filteredUsers() {
   const q = state.search.toLowerCase();
   let list = state.users.filter((user) => {
+    if (isSupportUser(user)) {
+      return false;
+    }
     if (!passesListFilter(user)) {
       return false;
     }
@@ -1729,31 +1779,31 @@ function renderEntityList() {
 
     for (const user of users) {
       const li = document.createElement("li");
-      li.className = "chat-item";
+      li.className = "chat-item dm-entry";
       li.classList.toggle("active", state.selected?.type === "dm" && state.selected.id === user.id);
       const secondary = user.lastMessageAt
-      ? `${user.lastMessageType === "image" ? `${iconMarkup("image", "inline-icon")}` : user.lastMessageType === "poll" ? `${iconMarkup("poll", "inline-icon")}` : user.lastMessageType === "file" ? `${iconMarkup("room", "inline-icon")}` : ""}${escapeHtml((user.lastMessageType === "file" ? (user.lastFileName || user.lastMessage) : user.lastMessage || "").slice(0, 52) || "[медиа]")}`
-        : `@${escapeHtml(user.username)} · ${escapeHtml(presenceLabel(user))}`;
+        ? `${user.lastMessageType === "image" ? `${iconMarkup("image", "inline-icon")}` : user.lastMessageType === "poll" ? `${iconMarkup("poll", "inline-icon")}` : user.lastMessageType === "file" ? `${iconMarkup("room", "inline-icon")}` : ""}${escapeHtml((user.lastMessageType === "file" ? (user.lastFileName || user.lastMessage) : user.lastMessage || "").slice(0, 52) || "[медиа]")}`
+        : `@${escapeHtml(user.username)}`;
       li.innerHTML = `
         <div class="avatar">${avatarMarkup(user)}</div>
         <div class="chat-item-main">
           <div class="room-card-headline">
-            <strong>${escapeHtml(user.displayName)}${user.isAdmin ? " 👑" : ""}</strong>
-            <span class="msg-time">${user.lastMessageAt ? formatTime(user.lastMessageAt) : presenceLabel(user)}</span>
+            <strong class="name-with-presence">${escapeHtml(displayNameFor(user))}${state.onlineIds.has(user.id) ? '<span class="presence online dm-presence-dot"></span>' : ""}${user.isAdmin ? " 👑" : ""}</strong>
+            <span class="msg-time chat-list-time">${user.lastMessageAt ? formatChatListTime(user.lastMessageAt) : ""}</span>
           </div>
-          <div class="room-card-badges">
+          <div class="room-card-badges dm-hidden-ui">
             <span class="chat-item-badge dm">dialog</span>
             ${state.onlineIds.has(user.id) ? `<span class="chat-item-badge online">online</span>` : `<span class="chat-item-badge dm">last seen</span>`}
             ${user.isAdmin ? `<span class="chat-item-badge manage">admin</span>` : ""}
           </div>
-          <p>${secondary}</p>
+          <p class="chat-list-preview">${secondary}</p>
         </div>
-        <div class="chat-item-tail">
+        <div class="chat-item-tail ${user.unreadCount ? "has-unread" : ""}">
           ${user.pinned ? `<span class="chat-mini-flag">${iconMarkup("pin", "xs")}</span>` : ""}
           ${user.muted ? `<span class="chat-mini-flag">${iconMarkup("mute", "xs")}</span>` : ""}
           ${user.unreadCount ? `<span class="chat-unread">${user.unreadCount > 99 ? "99+" : user.unreadCount}</span>` : ""}
           <span class="chat-item-arrow">${iconMarkup("arrowRight", "xs")}</span>
-          <button type="button" class="chat-more-btn" data-item-menu="dm" aria-label="Действия">${iconMarkup("more", "xs")}</button>
+          <button type="button" class="chat-more-btn dm-hidden-ui" data-item-menu="dm" aria-label="Действия">${iconMarkup("more", "xs")}</button>
         </div>
       `;
       li.addEventListener("click", () => {
@@ -1812,25 +1862,25 @@ function renderEntityList() {
     li.innerHTML = `
       <div class="avatar">${icon}</div>
       <div class="chat-item-main">
-        <div class="room-card-headline">
-          <strong>${escapeHtml(room.name)}</strong>
-          <span class="msg-time">${room.lastMessageAt ? formatTime(room.lastMessageAt) : room.joined ? "активно" : "новая"}</span>
-        </div>
+          <div class="room-card-headline">
+            <strong>${escapeHtml(room.name)}${isPrivateRoom(room) ? ` ${iconMarkup("lock", "xs room-lock-icon")}` : ""}</strong>
+            <span class="msg-time chat-list-time">${room.lastMessageAt ? formatChatListTime(room.lastMessageAt) : room.joined ? "активно" : "новая"}</span>
+          </div>
         <div class="room-card-badges">
           <span class="chat-item-badge ${isPrivateRoom(room) ? "lock" : "public"}">${isPrivateRoom(room) ? "private" : "public"}</span>
           ${room.hasInvitation ? `<span class="chat-item-badge invitation">invite</span>` : room.hasJoinRequest ? `<span class="chat-item-badge invitation">requested</span>` : ""}
           ${room.canManage ? `<span class="chat-item-badge manage">manage</span>` : ""}
         </div>
-        <p>${secondary}</p>
-      </div>
-      <div class="chat-item-tail">
+          <p class="chat-list-preview">${secondary}</p>
+        </div>
+        <div class="chat-item-tail ${room.unreadCount ? "has-unread" : ""}">
         ${room.pinned ? `<span class="chat-mini-flag">${iconMarkup("pin", "xs")}</span>` : ""}
         ${room.muted ? `<span class="chat-mini-flag">${iconMarkup("mute", "xs")}</span>` : ""}
         ${room.unreadCount ? `<span class="chat-unread">${room.unreadCount > 99 ? "99+" : room.unreadCount}</span>` : ""}
         <span class="chat-item-arrow">${room.joined ? iconMarkup("arrowRight", "xs") : iconMarkup("plus", "xs")}</span>
-        <button type="button" class="chat-more-btn" data-item-menu="room" aria-label="Действия">${iconMarkup("more", "xs")}</button>
-      </div>
-    `;
+          <button type="button" class="chat-more-btn dm-hidden-ui" data-item-menu="room" aria-label="Действия">${iconMarkup("more", "xs")}</button>
+        </div>
+      `;
     li.addEventListener("click", () => {
       const blockedUntil = Number(li.dataset.swipeUntil || 0);
       if (blockedUntil > Date.now()) {
@@ -2213,8 +2263,13 @@ function renderMessages({ forceBottom = false } = {}) {
   const messages = allMessages.slice(start);
   if (!messages.length) {
     const title = state.selected.type === "room" ? "В комнате пока тихо" : "Диалог пока пуст";
+    const currentRoom = state.selected.type === "room"
+      ? state.rooms.find((item) => item.id === state.selected.id)
+      : null;
     const hint = state.selected.type === "room"
-      ? "Напишите первое сообщение, чтобы начать обсуждение."
+      ? currentRoom?.joined && currentRoom?.canPost === false
+        ? "Читать сообщения можно, писать в этой комнате могут только админы."
+        : "Напишите первое сообщение, чтобы начать обсуждение."
       : "Отправьте первое сообщение и начните разговор.";
     els.messages.innerHTML = `<div class="empty-chat-state"><strong>${title}</strong><p class="msg-time">${hint}</p></div>`;
     refreshJumpBottomButton();
@@ -2276,8 +2331,7 @@ function renderMessages({ forceBottom = false } = {}) {
     node.innerHTML = `
       ${selected ? `<div class="msg-select-marker">${iconMarkup("arrowRight", "xs")}</div>` : ""}
       <div class="msg-head ${grouped ? "hidden" : ""}">
-        <span class="msg-author">${escapeHtml(sender.displayName)}${sender.isAdmin ? " 👑" : ""}</span>
-        <span class="msg-time">#${message.id}</span>
+        <span class="msg-author">${escapeHtml(displayNameFor(sender))}${sender.isAdmin ? " 👑" : ""}</span>
       </div>
       ${message.forwardedFromName ? `<div class="msg-forwarded">${iconMarkup("arrowRight", "xs")}<span>Forwarded from ${escapeHtml(message.forwardedFromName)}</span></div>` : ""}
       ${replyTarget ? `<div class="msg-reply">${escapeHtml(replyPreview.slice(0, 120))}</div>` : ""}
@@ -2474,12 +2528,11 @@ function updateChatHeader() {
   els.selectionClearBtn?.classList.add("hidden");
   els.chatHeadMain?.classList.remove("clickable");
   chatHead?.classList.remove('selection-mode');
+  setComposerState({ disabled: true, hidden: false, notice: "" });
   if (!state.selected) {
     els.chatTitle.textContent = "Выберите чат";
     els.chatStatus.textContent = "Личные и групповые диалоги";
     els.chatHeadAvatar.innerHTML = iconMarkup("chat");
-    els.messageInput.disabled = true;
-    els.sendBtn.disabled = true;
     syncMobileShellMetrics();
     return;
   }
@@ -2511,11 +2564,10 @@ function updateChatHeader() {
       return;
     }
     els.chatHeadMain?.classList.add("clickable");
-    els.chatTitle.textContent = user.displayName;
-    els.chatStatus.textContent = resolveTypingStatus(state.onlineIds.has(user.id) ? "В сети" : "Не в сети");
+    els.chatTitle.textContent = displayNameFor(user);
+    els.chatStatus.textContent = resolveTypingStatus(presenceLabel(user));
     els.chatHeadAvatar.innerHTML = avatarMarkup(user);
-    els.messageInput.disabled = false;
-    els.sendBtn.disabled = false;
+    setComposerState({ disabled: false, hidden: false, notice: "" });
     syncMobileShellMetrics();
     return;
   }
@@ -2534,12 +2586,23 @@ function updateChatHeader() {
     ? `<img src="${escapeHtml(room.avatarUrl)}" alt="${escapeHtml(room.name)}" />`
     : (isPrivateRoom(room) ? iconMarkup("lock") : iconMarkup("room"));
   const canPost = room.joined && room.canPost !== false;
-  els.messageInput.disabled = !canPost;
-  els.sendBtn.disabled = !canPost;
   if (room.joined && room.canPost === false) {
     els.chatStatus.textContent = resolveTypingStatus("Писать могут только админы комнаты");
+    setComposerState({ disabled: true, hidden: true, notice: "Писать в этой комнате могут только админы." });
+  } else {
+    setComposerState({ disabled: !canPost, hidden: false, notice: "" });
   }
   syncMobileShellMetrics();
+}
+
+function setComposerState({ disabled = false, hidden = false, notice = "" } = {}) {
+  els.messageInput.disabled = disabled;
+  els.sendBtn.disabled = disabled;
+  els.messageForm?.classList.toggle("hidden", hidden);
+  if (els.composerNotice) {
+    els.composerNotice.textContent = notice;
+    els.composerNotice.classList.toggle("hidden", !hidden || !notice);
+  }
 }
 
 async function loadDmMessages(userId, { beforeId = null, append = false } = {}) {
@@ -2645,6 +2708,18 @@ async function selectRoom(roomId) {
         await api(`/api/rooms/${roomId}/join`, { method: "POST" });
         await loadRooms();
       }
+    }
+
+    try {
+      const detail = await api(`/api/rooms/${roomId}`);
+      if (detail?.id) {
+        const index = state.rooms.findIndex((item) => item.id === roomId);
+        if (index >= 0) {
+          state.rooms[index] = { ...state.rooms[index], ...detail };
+        }
+      }
+    } catch {
+      // keep existing room snapshot if detail refresh fails
     }
 
     clearReply();
@@ -2993,7 +3068,7 @@ async function openRoomProfileSheet(roomId, initialTab = "info") {
       <div class="settings-pill">Медиа: ${media.length}</div>
       <div class="settings-pill">Ссылки: ${links.length}</div>
       <div class="settings-pill">Файлы: ${files.length}</div>
-      <div class="settings-pill">Тип: ${room.accessType === "private" ? "private" : "public"}</div>
+      <div class="settings-pill">${room.accessType === "private" ? "Закрытая" : "Публичная"}</div>
     </div>
     ${mediaPreview.length ? `<div class="room-media-strip">${mediaPreview.map((item) => `<button type="button" class="room-media-strip-item" data-open-image="${escapeHtml(item.imageUrl)}"><img src="${escapeHtml(item.imageUrl)}" alt="image" /></button>`).join("")}${media.length > mediaPreview.length ? `<button type="button" class="room-media-strip-more" data-room-profile-tab-jump="media">+${media.length - mediaPreview.length}</button>` : ""}</div>` : ""}
   `;
@@ -3028,13 +3103,17 @@ async function openRoomProfileSheet(roomId, initialTab = "info") {
         <section class="settings-hero room-profile-hero">
           <div class="profile-hero-main">
             <div class="avatar profile-hero-avatar">${room.avatarUrl ? `<img src="${escapeHtml(room.avatarUrl)}" alt="${escapeHtml(room.name)}" />` : (isPrivateRoom(room) ? iconMarkup("lock") : iconMarkup("room"))}</div>
-            <div>
+            <div class="profile-hero-copy">
               <strong>${escapeHtml(room.name)}</strong>
-              <p class="msg-time">${room.accessType === "private" ? "Закрытая комната" : "Публичная комната"} · участников: ${room.membersCount}</p>
+              <p class="msg-time">${room.accessType === "private" ? "Закрытая комната" : "Публичная комната"}</p>
               ${room.description ? `<p class="msg-time">${escapeHtml(room.description)}</p>` : ""}
+              <div class="profile-summary-pills">
+                <span class="settings-pill">Участников: ${room.membersCount}</span>
+                <span class="settings-pill">${room.canPost ? "Пишут участники" : "Пишут админы"}</span>
+              </div>
             </div>
           </div>
-          <div class="room-profile-actions">
+          <div class="room-profile-actions profile-inline-actions">
             ${roomLink ? `<button type="button" class="icon-btn" data-room-share-link="${escapeHtml(roomLink)}" aria-label="Поделиться ссылкой">${iconMarkup("arrowRight")}</button>` : ""}
             ${canManage ? `<button type="button" class="icon-btn" data-room-open-manage="${room.id}" aria-label="Настройки комнаты">${iconMarkup("room")}</button>` : ""}
           </div>
@@ -3049,11 +3128,11 @@ async function openRoomProfileSheet(roomId, initialTab = "info") {
           </div>
         </section>
         <section class="settings-card room-profile-panel ${initialTab === "info" ? "" : "hidden"}" data-room-profile-panel="info">
-          <div class="settings-card-head"><div><strong>О комнате</strong><p class="msg-time">Основная информация и ссылка для приглашения.</p></div></div>
+          <div class="settings-card-head"><div><strong>О комнате</strong></div></div>
           ${mediaSummaryHtml}
           ${room.description ? `<p>${escapeHtml(room.description)}</p>` : `<div class="settings-empty"><strong>Пусто</strong><p class="msg-time">Описание еще не заполнено</p></div>`}
           ${roomLink ? `<button type="button" class="settings-empty room-link-box" data-copy-room-link="${escapeHtml(roomLink)}"><strong>${escapeHtml(room.slug)}</strong><p class="msg-time">${escapeHtml(roomLink)}</p></button>` : ""}
-          <div class="settings-card-head"><div><strong>Участники</strong><p class="msg-time">Основной состав комнаты.</p></div></div>
+          <div class="settings-card-head"><div><strong>Участники</strong></div></div>
           ${membersHtml}
         </section>
         <section class="settings-card room-profile-panel ${initialTab === "media" ? "" : "hidden"}" data-room-profile-panel="media">
@@ -4557,40 +4636,48 @@ async function openSettingsModal() {
         .join("")}</div>`
     : `<div class="settings-empty"><strong>Пусто</strong><p class="msg-time">Нет данных по устройствам</p></div>`;
 
-  const notificationCardClass = notificationsDenied || notificationsUnsupported
-    ? "settings-card warning"
-    : notificationsGranted
-      ? "settings-card success"
-      : "settings-card";
+  const versionLabel = state.remoteVersion || APP_VERSION;
+  const themeLabel = state.theme === "dark" ? "Темная" : "Светлая";
+  const notificationsLabel = notificationsGranted
+    ? "Разрешены"
+    : notificationsDenied
+      ? "Заблокированы"
+      : notificationsUnsupported
+        ? "Недоступны"
+        : "Не настроены";
 
   els.sheetTitle.textContent = "Настройки";
   els.sheetSubmit.classList.add("hidden");
   els.sheetBody.innerHTML = `
       <div class="stack settings-layout">
-        <section class="settings-hero">
-          <div>
-            <strong>Pulse Settings</strong>
-            <p class="msg-time">Персонализируйте внешний вид, уведомления и контроль доступа к аккаунту.</p>
+        <section class="settings-hero settings-hero-brand">
+          <div class="settings-hero-mark">
+            <img src="/logo-mark.png" alt="Zhuravlik" />
+          </div>
+          <div class="settings-hero-copy">
+            <strong>Настройки Zhuravlik</strong>
+            <p class="msg-time">Тема, уведомления и активные сессии.</p>
+            <p class="settings-hero-note">Версия ${escapeHtml(versionLabel)}</p>
           </div>
         </section>
-        <section class="settings-card">
+        <section class="settings-card settings-card-quiet">
           <div class="settings-card-head">
             <div>
               <strong>Тема интерфейса</strong>
-              <p class="msg-time">Светлая и темная палитра переключаются мгновенно.</p>
             </div>
+            <span class="settings-inline-value">${escapeHtml(themeLabel)}</span>
           </div>
           <div class="segmented compact settings-theme-switcher">
             <button class="seg-btn ${state.theme === "light" ? "active" : ""}" data-theme-btn="light" type="button">Светлая</button>
             <button class="seg-btn ${state.theme === "dark" ? "active" : ""}" data-theme-btn="dark" type="button">Темная</button>
           </div>
         </section>
-        <section class="${notificationCardClass}">
+        <section class="settings-card settings-card-quiet">
           <div class="settings-card-head">
             <div>
               <strong>Уведомления</strong>
-              <p class="msg-time">Управление доступом браузера и локальными оповещениями.</p>
             </div>
+            <span class="settings-inline-value">${escapeHtml(notificationsLabel)}</span>
             <label class="settings-toggle ${notificationsDenied || notificationsUnsupported ? "disabled" : ""}">
               <input id="notificationsEnabledToggle" type="checkbox" ${state.notificationsEnabled ? "checked" : ""} ${notificationsDenied || notificationsUnsupported ? "disabled" : ""} />
               <span></span>
@@ -4601,7 +4688,7 @@ async function openSettingsModal() {
             <div class="settings-pill ${notificationsData.pushEnabled ? "" : "disabled"}">Push backend: ${notificationsData.pushEnabled ? "OK" : "OFF"}</div>
             <div class="settings-pill ${notificationsData.subscriptions ? "" : "disabled"}">Подписок: ${notificationsData.subscriptions}</div>
           </div>
-          <div class="settings-actions-row">
+          <div class="settings-actions-row settings-actions-grid">
             <button id="notificationsPermissionBtn" class="ghost ${notificationsGranted || notificationsUnsupported ? "hidden" : ""}" type="button">Разрешить уведомления</button>
             <button id="notificationsHelpBtn" class="ghost ${notificationsDenied ? "" : "hidden"}" type="button">Как включить</button>
             <button id="notificationsTestBtn" class="ghost ${notificationsGranted ? "" : "hidden"}" type="button">Тест уведомления</button>
@@ -4609,17 +4696,13 @@ async function openSettingsModal() {
             <button id="notificationsResetBtn" class="ghost ${notificationsData.subscriptions ? "" : "hidden"}" type="button">Сбросить подписку</button>
             <button id="notificationsRefreshBtn" class="ghost" type="button">Обновить статус</button>
           </div>
-          <div class="settings-meta-grid">
-            <div class="settings-pill disabled">Звуки скоро</div>
-            <div class="settings-pill disabled">Компактный режим скоро</div>
-          </div>
         </section>
-        <section class="settings-card">
+        <section class="settings-card settings-card-quiet">
           <div class="settings-card-head">
             <div>
               <strong>Устройства и сессии</strong>
-              <p class="msg-time">Список устройств, где есть доступ к аккаунту.</p>
             </div>
+            <span class="settings-inline-value ${sessions.length ? "" : "disabled"}">${sessions.length}</span>
           </div>
           ${sessionsHtml}
         </section>
@@ -4666,7 +4749,7 @@ async function openSettingsModal() {
   els.sheetBody.querySelector("#notificationsTestBtn")?.addEventListener("click", async () => {
     try {
       await showLocalNotification({
-        title: "Pulse Messenger",
+        title: "Zhuravlik",
         body: "Тестовое уведомление работает корректно.",
       });
       showToast("Тестовое уведомление отправлено", "success");
@@ -4738,6 +4821,7 @@ async function openSettingsModal() {
 
 function openContactsModal() {
   const contacts = state.users
+    .filter((user) => !isSupportUser(user))
     .map(
       (user) => `
       <button class="menu-contact-item settings-contact-card" type="button" data-open-dm="${user.id}">
@@ -4787,41 +4871,53 @@ function openContactsModal() {
   });
 }
 
+async function openSupportDialog() {
+  let supportUser = getSupportUser();
+  if (!supportUser) {
+    await loadUsers();
+    supportUser = getSupportUser();
+  }
+  if (!supportUser?.id) {
+    throw new Error("Аккаунт support не найден");
+  }
+  setListMode("dm");
+  await selectDm(supportUser.id);
+}
+
 function openAboutModal() {
+  const versionLabel = state.remoteVersion || APP_VERSION;
   openSheet(
     "О приложении",
     "",
     `
       <div class="stack settings-layout">
-        <section class="settings-hero">
+        <section class="settings-hero about-hero">
+          <div class="about-hero-mark">
+            <img src="/logo-mark.png" alt="Zhuravlik" />
+          </div>
           <div>
-            <strong>Pulse Messenger</strong>
-            <p class="msg-time">v1.0 · realtime чат для личного круга, комнат и приватного общения.</p>
+            <strong>Zhuravlik</strong>
+            <p class="msg-time">Закрытый мессенджер для личных диалогов, комнат и приватного общения.</p>
           </div>
         </section>
         <section class="settings-card">
-          <div class="settings-card-head">
+          <div class="settings-card-head about-card-head">
             <div>
-              <strong>Что уже умеет</strong>
-              <p class="msg-time">Базовая платформа общения с акцентом на живой realtime UX.</p>
+              <strong>Версия</strong>
+              <p class="msg-time">Текущая версия приложения и клиентской сборки.</p>
             </div>
+            <span class="settings-pill">${escapeHtml(versionLabel)}</span>
           </div>
-          <div class="settings-meta-grid about-grid">
-            <div class="settings-pill">Личные чаты</div>
-            <div class="settings-pill">Комнаты</div>
-            <div class="settings-pill">Приглашения</div>
-            <div class="settings-pill">Реакции</div>
-            <div class="settings-pill">Опросы</div>
-            <div class="settings-pill">Изображения</div>
-          </div>
+          <p class="msg-time">Если после обновления интерфейс отображается не сразу, просто обновите страницу.</p>
         </section>
         <section class="settings-card">
           <div class="settings-card-head">
             <div>
               <strong>О проекте</strong>
-              <p class="msg-time">Собран на Node.js, Socket.IO и SQLite, подходит для VPS и Raspberry Pi.</p>
+              <p class="msg-time">Собран на Node.js, Socket.IO и SQLite. Подходит для VPS и Raspberry Pi.</p>
             </div>
           </div>
+          <p class="msg-time">Zhuravlik рассчитан на быстрый приватный обмен сообщениями без лишней перегруженности интерфейса.</p>
         </section>
       </div>
     `,
@@ -4891,7 +4987,7 @@ async function openDmProfileSheet(userId, initialTab = "info") {
     throw new Error("Пользователь не найден");
   }
 
-  renderSheetLoading(user.displayName, 5);
+  renderSheetLoading(displayNameFor(user), 5);
   const data = await api(`/api/media/shared?scope=dm&targetId=${userId}&limit=80`);
   const media = data.media || [];
   const files = data.files || [];
@@ -4917,23 +5013,27 @@ async function openDmProfileSheet(userId, initialTab = "info") {
       <div class="settings-pill">Медиа: ${media.length}</div>
       <div class="settings-pill">Ссылки: ${links.length}</div>
       <div class="settings-pill">Файлы: ${files.length}</div>
-      <div class="settings-pill ${state.onlineIds.has(user.id) ? "" : "disabled"}">${state.onlineIds.has(user.id) ? "online" : "last seen"}</div>
+      <div class="settings-pill ${state.onlineIds.has(user.id) ? "" : "disabled"}">${state.onlineIds.has(user.id) ? "В сети" : "Не в сети"}</div>
     </div>
     ${mediaPreview.length ? `<div class="room-media-strip">${mediaPreview.map((item) => `<button type="button" class="room-media-strip-item" data-open-image="${escapeHtml(item.imageUrl)}"><img src="${escapeHtml(item.imageUrl)}" alt="image" /></button>`).join("")}${media.length > mediaPreview.length ? `<button type="button" class="room-media-strip-more" data-dm-profile-tab-jump="media">+${media.length - mediaPreview.length}</button>` : ""}</div>` : ""}
   `;
 
   openSheet(
-    user.displayName,
+    displayNameFor(user),
     "",
     `
       <div class="stack settings-layout room-profile-layout">
         <section class="settings-hero room-profile-hero">
           <div class="profile-hero-main">
             <div class="avatar profile-hero-avatar">${avatarMarkup(user)}</div>
-            <div>
-              <strong>${escapeHtml(user.displayName)}</strong>
+            <div class="profile-hero-copy">
+              <strong>${escapeHtml(displayNameFor(user))}</strong>
               <p class="msg-time">@${escapeHtml(user.username)}${user.isAdmin ? " · admin" : ""}</p>
               <p class="msg-time">${escapeHtml(statusLabel)}</p>
+              <div class="profile-summary-pills">
+                <span class="settings-pill">Медиа: ${media.length}</span>
+                <span class="settings-pill">Файлы: ${files.length}</span>
+              </div>
             </div>
           </div>
         </section>
@@ -4946,21 +5046,12 @@ async function openDmProfileSheet(userId, initialTab = "info") {
           </div>
         </section>
         <section class="settings-card room-profile-panel ${initialTab === "info" ? "" : "hidden"}" data-dm-profile-panel="info">
-          <div class="settings-card-head"><div><strong>О пользователе</strong><p class="msg-time">Основная информация о собеседнике.</p></div></div>
+          <div class="settings-card-head"><div><strong>О пользователе</strong></div></div>
           ${summaryHtml}
-          <div class="settings-meta-grid">
-            <div class="settings-pill">Диалог</div>
-            <div class="settings-pill ${state.onlineIds.has(user.id) ? "" : "disabled"}">${state.onlineIds.has(user.id) ? "online" : "offline"}</div>
-            ${user.isAdmin ? `<div class="settings-pill">admin</div>` : ""}
-          </div>
-          <div class="settings-actions-row">
+          <div class="settings-actions-row profile-inline-actions profile-action-row">
             <button type="button" class="ghost" data-dm-open-search>Поиск</button>
             <button type="button" class="ghost" data-dm-open-media>Медиа</button>
             <button type="button" class="ghost danger" data-dm-clear>Очистить</button>
-          </div>
-          <div class="settings-empty room-link-box">
-            <strong>Статус</strong>
-            <p class="msg-time">${statusLabel}</p>
           </div>
         </section>
         <section class="settings-card room-profile-panel ${initialTab === "media" ? "" : "hidden"}" data-dm-profile-panel="media">
@@ -5374,6 +5465,14 @@ els.menuSettingsBtn.addEventListener("click", async () => {
 els.menuContactsBtn.addEventListener("click", () => {
   closeSideMenu();
   openContactsModal();
+});
+els.menuSupportBtn?.addEventListener("click", async () => {
+  closeSideMenu();
+  try {
+    await openSupportDialog();
+  } catch (error) {
+    alert(error.message);
+  }
 });
 els.menuInvitesBtn?.addEventListener("click", () => {
   closeSideMenu();

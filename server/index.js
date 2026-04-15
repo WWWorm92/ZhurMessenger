@@ -1409,7 +1409,7 @@ app.post("/api/notifications/test", authMiddleware, async (req, res) => {
       return;
     }
     await sendWebPushToUser(req.user.id, {
-      title: "Pulse Messenger",
+      title: "Zhuravlik",
       body: "Тестовое push-уведомление отправлено успешно.",
       url: "/",
     });
@@ -3581,16 +3581,6 @@ app.get("/api/rooms/:roomId/messages", authMiddleware, async (req, res) => {
       return;
     }
 
-    const me = await get("SELECT id, is_admin FROM users WHERE id = ?", [req.user.id]);
-    if (!canPostToRoom(me, room, room.my_role || null)) {
-      res.status(403).json({ error: "You do not have permission to post in this room" });
-      return;
-    }
-    if (room.my_muted) {
-      res.status(403).json({ error: "You are muted in this room" });
-      return;
-    }
-
     const beforeId = mustBeValidId(req.query.beforeId);
     const limit = parseLimit(req.query.limit, 60, 200);
 
@@ -3676,6 +3666,16 @@ app.post("/api/rooms/:roomId/messages", authMiddleware, messageRateLimit, async 
     const room = await getRoomForUser(req.user.id, roomId);
     if (!room) {
       res.status(403).json({ error: "Join room first" });
+      return;
+    }
+
+    const me = await get("SELECT id, is_admin FROM users WHERE id = ?", [req.user.id]);
+    if (!canPostToRoom(me, room, room.my_role || null)) {
+      res.status(403).json({ error: "You do not have permission to post in this room" });
+      return;
+    }
+    if (room.my_muted) {
+      res.status(403).json({ error: "You are muted in this room" });
       return;
     }
 

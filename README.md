@@ -1,27 +1,28 @@
-# Pulse Messenger
+# Zhuravlik
 
-Realtime messenger on `Node.js + Express + Socket.IO + SQLite` with private chats, rooms, invitations, reactions, polls, image uploads, admin console, room moderation, PWA basics, and session management.
+Zhuravlik is a small self-hosted messenger for private dialogs and rooms. It is built for families, local communities, small teams, and anyone who wants a closed chat space they can run on their own server or Raspberry Pi.
 
-## Features
+The project uses a simple stack: `Node.js`, `Express`, `Socket.IO`, `SQLite`, and plain frontend code without a heavy framework.
 
-- private dialogs and room chats
-- public and private rooms with invitations
-- room roles: `owner / admin / member`
-- room policies: who can post and invite
-- moderation audit log
-- message replies, edits, soft delete, reactions
-- image uploads with preview
-- polls in chats
-- admin console for user management
-- archived/muted/pinned chats
-- session/device management
-- service worker + notification groundwork
+## What It Does
 
-## Tech Stack
+- private dialogs
+- public and private rooms
+- invitations and join requests
+- room roles: `owner`, `admin`, `member`
+- room rules for posting and inviting
+- replies, edits, soft delete, forwarding, reactions
+- polls, image uploads, files, shared media/links/files
+- unread counters, typing, read status, pinned/muted/archived chats
+- profile screens for rooms and direct dialogs
+- admin console and room moderation tools
+- session management and browser notifications
+
+## Stack
 
 - backend: `Node.js`, `Express`, `Socket.IO`
 - database: `SQLite`
-- auth: `JWT`, refresh sessions, `bcryptjs`
+- auth: JWT access token + refresh session cookie
 - uploads: `multer`
 - frontend: `HTML`, `CSS`, `Vanilla JS`
 
@@ -33,50 +34,68 @@ cp .env.example .env
 npm start
 ```
 
-Open `http://localhost:3010` or configure `PORT` in `.env`.
+By default the app runs on `http://localhost:3010`.
 
-## One-command Install
+## Environment
 
-For Ubuntu, Debian, and Raspberry Pi OS there is a ready installer:
+Copy `.env.example` and set the values you actually need.
+
+Important variables:
+
+- `NODE_ENV` - `development` or `production`
+- `HOST` - usually `127.0.0.1` behind nginx/caddy
+- `PORT` - app port
+- `JWT_SECRET` - required in production
+- `CORS_ORIGIN` - required in production
+- `DB_PATH` - SQLite database file
+- `UPLOADS_DIR` - uploads directory
+- `ACCESS_TOKEN_TTL` - access token lifetime, default `15m`
+- `REFRESH_TOKEN_TTL_DAYS` - refresh session lifetime, default `30`
+- `HTTPS_KEY_PATH` / `HTTPS_CERT_PATH` - optional direct HTTPS in Node
+- `WEB_PUSH_PUBLIC_KEY` / `WEB_PUSH_PRIVATE_KEY` / `WEB_PUSH_SUBJECT` - optional web push settings
+
+## Install on Server
+
+For Debian, Ubuntu, and Raspberry Pi OS there is a ready installer:
 
 ```bash
 sudo bash scripts/install-anywhere.sh
 ```
 
-Optional variables:
+Example with custom values:
 
 ```bash
-sudo DOMAIN=chat.example.com APP_DIR=/opt/ZhurMessenger bash scripts/install-anywhere.sh
+sudo DOMAIN=chat.example.com APP_DIR=/opt/zhuravlik bash scripts/install-anywhere.sh
 ```
 
-By default the installer bootstraps the first admin account as:
+Default bootstrap admin:
 
 - login: `admin`
 - password: `!QAZxsw2`
 
-You can override it:
+Override it if needed:
 
 ```bash
 sudo ADMIN_USERNAME=myadmin ADMIN_PASSWORD='strong-password' ADMIN_DISPLAY_NAME='Main Admin' bash scripts/install-anywhere.sh
 ```
 
-## Automatic Updates From GitHub
+## Automatic Updates
 
-The project includes a polling auto-updater for Linux servers.
+The repository includes a simple updater for Linux servers.
 
-Install it:
+Install it with:
 
 ```bash
 sudo bash scripts/install-auto-update.sh
 ```
 
-What it does:
+It can:
 
-- checks `origin/main` every 2 minutes
-- if new commits exist, runs `git pull --ff-only`
-- installs dependencies
-- restarts `zhur-messenger`
-- creates lightweight backups of DB/uploads before update
+- check GitHub for new commits
+- pull updates with `git pull --ff-only`
+- install dependencies
+- restart the app service
+- make lightweight backups before update
 
 Useful commands:
 
@@ -85,67 +104,15 @@ systemctl status zhur-messenger-update.timer
 journalctl -u zhur-messenger-update.service -f
 ```
 
-## Environment Variables
+## Run Behind Nginx
 
-Copy `.env.example` and adjust values.
-
-- `NODE_ENV` - `development` or `production`
-- `HOST` - bind host, usually `127.0.0.1` behind reverse proxy or `0.0.0.0` in container
-- `PORT` - app port
-- `JWT_SECRET` - required in production
-- `CORS_ORIGIN` - required in production; allowed frontend origin, for example `https://chat.example.com`
-- `DB_PATH` - SQLite file path
-- `UPLOADS_DIR` - upload storage path
-- `ACCESS_TOKEN_TTL` - short-lived access token ttl, default `15m`
-- `REFRESH_TOKEN_TTL_DAYS` - refresh session ttl in days, default `30`
-- `HTTPS_KEY_PATH` / `HTTPS_CERT_PATH` - optional direct HTTPS in Node
-- `WEB_PUSH_PUBLIC_KEY` - optional web-push public key
-- `WEB_PUSH_PRIVATE_KEY` - optional web-push private key
-- `WEB_PUSH_SUBJECT` - contact for VAPID, e.g. `mailto:admin@example.com`
-- `GET /api/notifications/status` - check push backend/subscription status for current user
-- `POST /api/notifications/test` - send a test push to current user subscriptions
-
-Production security notes:
-
-- `CORS_ORIGIN` must be set in production
-- uploaded images and supported document types are checked by MIME and file signature
-- files are served as attachments from `/uploads/files`
-
-## Deploy Anywhere
-
-Full migration guide: `DEPLOY.md`
-
-User-facing guide in Russian: `USER_GUIDE_RU.md`
-
-### Option 1: Plain Node + reverse proxy
-
-Best for VPS, Raspberry Pi, home server.
-
-```bash
-npm install
-cp .env.example .env
-mkdir -p data uploads/avatars uploads/messages
-npm start
-```
-
-Recommended production setup:
+Typical production setup:
 
 - app listens on `127.0.0.1:3010`
-- nginx/caddy terminates HTTPS and proxies to the app
-- `DB_PATH=./data/messenger.db`
-- `UPLOADS_DIR=./uploads`
+- nginx or caddy terminates HTTPS
+- SQLite database and uploads live outside the repo root if possible
 
-### Option 2: Docker
-
-```bash
-cp .env.example .env
-mkdir -p data uploads/avatars uploads/messages
-docker compose up -d --build
-```
-
-App will be available on port `3010` unless changed in compose/proxy.
-
-## Reverse Proxy Example (Nginx)
+Example nginx config:
 
 ```nginx
 server {
@@ -168,17 +135,29 @@ server {
 }
 ```
 
-## Raspberry Pi Notes
+## Docker
 
-- use `Node 20 LTS`
-- keep `data/` and `uploads/` on SSD if possible
-- run app with `systemd` or Docker
-- put nginx/caddy in front for HTTPS
-- keep SQLite backups
+```bash
+cp .env.example .env
+mkdir -p data uploads/avatars uploads/messages uploads/rooms uploads/files
+docker compose up -d --build
+```
+
+## Files You Should Persist
+
+- `data/messenger.db`
+- `uploads/avatars`
+- `uploads/messages`
+- `uploads/rooms`
+- `uploads/files`
 
 ## Health Check
 
-`GET /health`
+Endpoint:
+
+```text
+GET /health
+```
 
 Example response:
 
@@ -190,6 +169,23 @@ Example response:
   "env": "production"
 }
 ```
+
+## Security Notes
+
+- set a strong `JWT_SECRET` in production
+- set `CORS_ORIGIN` explicitly in production
+- run the app behind HTTPS
+- keep `.env`, database files, and backups private
+- uploaded images and supported documents are checked before being accepted
+- files from `/uploads/files` are served as attachments
+
+This is a self-hosted messenger, not an end-to-end encrypted one. The server can access message contents.
+
+## Docs
+
+- deployment notes: `DEPLOY.md`
+- Russian user guide: `USER_GUIDE_RU.md`
+- Russian PDF guide: `USER_GUIDE_RU.pdf`
 
 ## Main API
 
@@ -209,34 +205,10 @@ Example response:
 - `POST /api/rooms`
 - `GET /api/rooms/:roomId`
 - `PATCH /api/rooms/:roomId`
-- `GET /api/rooms/:roomId/audit`
 - `POST /api/rooms/:roomId/messages`
-- `POST /api/admin/users`
+- `GET /api/media/shared`
+- `GET /api/admin/overview`
 
-## Files You Should Persist
+## Notes
 
-- `data/messenger.db`
-- `uploads/avatars`
-- `uploads/messages`
-
-## Publish to GitHub
-
-This repo is now prepared for GitHub publication:
-
-- secrets are not committed by default
-- runtime data is ignored by `.gitignore`
-- deploy config is documented
-- Docker deployment is included
-
-To publish manually:
-
-```bash
-git init
-git add .
-git commit -m "Initial Pulse Messenger release"
-git branch -M main
-git remote add origin <YOUR_GITHUB_REPO_URL>
-git push -u origin main
-```
-
-If you want me to create the git repo locally and prepare the exact push commands for your GitHub repo URL, send me the repo URL.
+This project has grown around real usage and practical deployment needs, especially on small servers and Raspberry Pi devices. The codebase is intentionally straightforward to run, inspect, and maintain.
