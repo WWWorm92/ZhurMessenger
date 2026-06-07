@@ -9,7 +9,7 @@ CERT_FILE="$CERT_DIR/localhost-cert.pem"
 mkdir -p "$CERT_DIR"
 
 if ! command -v openssl >/dev/null 2>&1; then
-  echo "openssl not found. Install openssl and run again."
+  echo "Не найден openssl. Установи openssl и запусти скрипт снова."
   exit 1
 fi
 
@@ -52,4 +52,4 @@ rm -f "$CERT_DIR/localhost-openssl.cnf"
 echo "Generated:"
 echo "  $KEY_FILE"
 echo "  $CERT_FILE"
-echo "Run HTTPS server with: npm run start:https"
+echo "Запусти HTTPS-сервер командой: npm run start:https"

@@ -1,31 +1,33 @@
 # Pulse Messenger
 
-Realtime messenger on `Node.js + Express + Socket.IO + SQLite` with private chats, rooms, invitations, reactions, polls, image uploads, admin console, room moderation, PWA basics, and session management.
+Обычный рабочий мессенджер на `Node.js + Express + Socket.IO + SQLite`.
 
-## Features
+Здесь есть личные чаты, комнаты, приглашения, реакции, опросы, загрузка картинок, админка, модерация и управление сессиями.
 
-- private dialogs and room chats
-- public and private rooms with invitations
-- room roles: `owner / admin / member`
-- room policies: who can post and invite
-- moderation audit log
-- message replies, edits, soft delete, reactions
-- image uploads with preview
-- polls in chats
-- admin console for user management
-- archived/muted/pinned chats
-- session/device management
-- service worker + notification groundwork
+## Что умеет
 
-## Tech Stack
+- личные диалоги и чаты в комнатах
+- публичные и закрытые комнаты с приглашениями
+- роли в комнате: `owner`, `admin`, `member`
+- настройки комнаты: кто может писать и приглашать
+- журнал модерации
+- ответы, редактирование, удаление сообщений и реакции
+- загрузка изображений с предпросмотром
+- опросы в чатах
+- админка для управления пользователями
+- архивирование, мут и закрепление чатов
+- управление сессиями и устройствами
+- service worker и базовая поддержка уведомлений
+
+## Технологии
 
 - backend: `Node.js`, `Express`, `Socket.IO`
-- database: `SQLite`
-- auth: `JWT`, refresh sessions, `bcryptjs`
-- uploads: `multer`
+- база: `SQLite`
+- авторизация: `JWT`, refresh-сессии, `bcryptjs`
+- загрузки: `multer`
 - frontend: `HTML`, `CSS`, `Vanilla JS`
 
-## Quick Start
+## Быстрый запуск
 
 ```bash
 npm install
@@ -33,152 +35,99 @@ cp .env.example .env
 npm start
 ```
 
-Open `http://localhost:3010` or configure `PORT` in `.env`.
+После этого открой `http://localhost:3010` или поменяй `PORT` в `.env`.
 
-## One-command Install
+## Установка на сервер
 
-For Ubuntu, Debian, and Raspberry Pi OS there is a ready installer:
+Для Ubuntu, Debian и Raspberry Pi OS есть установщик:
 
 ```bash
 sudo bash scripts/install-anywhere.sh
 ```
 
-Optional variables:
+Он сам спросит всё нужное и доведёт установку до конца.
+
+Если нужен домен, можно сразу передать переменные:
 
 ```bash
 sudo DOMAIN=chat.example.com APP_DIR=/opt/ZhurMessenger bash scripts/install-anywhere.sh
 ```
 
-By default the installer bootstraps the first admin account as:
+По умолчанию первый админ создаётся так:
 
-- login: `admin`
-- password: `!QAZxsw2`
+- логин: `admin`
+- пароль: `!QAZxsw2`
 
-You can override it:
+Можно задать свои значения:
 
 ```bash
-sudo ADMIN_USERNAME=myadmin ADMIN_PASSWORD='strong-password' ADMIN_DISPLAY_NAME='Main Admin' bash scripts/install-anywhere.sh
+sudo ADMIN_USERNAME=myadmin ADMIN_PASSWORD='strong-password' ADMIN_DISPLAY_NAME='Главный админ' bash scripts/install-anywhere.sh
 ```
 
-## Automatic Updates From GitHub
+## Автообновление
 
-The project includes a polling auto-updater for Linux servers.
-
-Install it:
+Если нужно, можно поставить автообновление из GitHub:
 
 ```bash
 sudo bash scripts/install-auto-update.sh
 ```
 
-What it does:
+Что делает автообновление:
 
-- checks `origin/main` every 2 minutes
-- if new commits exist, runs `git pull --ff-only`
-- installs dependencies
-- restarts `zhur-messenger`
-- creates lightweight backups of DB/uploads before update
+- проверяет `origin/main` каждые 2 минуты
+- если есть новые коммиты, делает `git pull --ff-only`
+- переустанавливает зависимости
+- перезапускает сервис
+- делает backup базы и uploads перед обновлением
 
-Useful commands:
+Проверка статуса:
 
 ```bash
 systemctl status zhur-messenger-update.timer
 journalctl -u zhur-messenger-update.service -f
 ```
 
-## Environment Variables
+## Переменные окружения
 
-Copy `.env.example` and adjust values.
+Скопируй `.env.example` в `.env` и поправь при необходимости.
 
-- `NODE_ENV` - `development` or `production`
-- `HOST` - bind host, usually `127.0.0.1` behind reverse proxy or `0.0.0.0` in container
-- `PORT` - app port
-- `JWT_SECRET` - required in production
-- `CORS_ORIGIN` - required in production; allowed frontend origin, for example `https://chat.example.com`
-- `DB_PATH` - SQLite file path
-- `UPLOADS_DIR` - upload storage path
-- `ACCESS_TOKEN_TTL` - short-lived access token ttl, default `15m`
-- `REFRESH_TOKEN_TTL_DAYS` - refresh session ttl in days, default `30`
-- `HTTPS_KEY_PATH` / `HTTPS_CERT_PATH` - optional direct HTTPS in Node
-- `WEB_PUSH_PUBLIC_KEY` - optional web-push public key
-- `WEB_PUSH_PRIVATE_KEY` - optional web-push private key
-- `WEB_PUSH_SUBJECT` - contact for VAPID, e.g. `mailto:admin@example.com`
-- `GET /api/notifications/status` - check push backend/subscription status for current user
-- `POST /api/notifications/test` - send a test push to current user subscriptions
+- `NODE_ENV` - режим работы, обычно `production`
+- `HOST` - адрес привязки, обычно `127.0.0.1`
+- `PORT` - порт приложения
+- `JWT_SECRET` - обязателен в production
+- `CORS_ORIGIN` - разрешённый адрес фронта
+- `DB_PATH` - путь к SQLite базе
+- `UPLOADS_DIR` - каталог для загрузок
+- `ACCESS_TOKEN_TTL` - время жизни access token, по умолчанию `15m`
+- `REFRESH_TOKEN_TTL_DAYS` - срок жизни refresh-сессий, по умолчанию `30`
+- `HTTPS_KEY_PATH` / `HTTPS_CERT_PATH` - если нужен HTTPS прямо в Node
+- `WEB_PUSH_PUBLIC_KEY` - публичный ключ web push
+- `WEB_PUSH_PRIVATE_KEY` - приватный ключ web push
+- `WEB_PUSH_SUBJECT` - контакт для VAPID, например `mailto:admin@example.com`
 
-Production security notes:
+## Продакшен
 
-- `CORS_ORIGIN` must be set in production
-- uploaded images and supported document types are checked by MIME and file signature
-- files are served as attachments from `/uploads/files`
+Нормальная схема такая:
 
-## Deploy Anywhere
+- приложение слушает `127.0.0.1:3010`
+- снаружи стоит `nginx` или `caddy`
+- HTTPS завершает прокси
+- база лежит в `data/messenger.db`
+- файлы лежат в `uploads/`
 
-Full migration guide: `DEPLOY.md`
+Для Docker тоже есть готовый `docker-compose.yml`.
 
-### Option 1: Plain Node + reverse proxy
+## Что важно сохранить
 
-Best for VPS, Raspberry Pi, home server.
+- `data/messenger.db`
+- `uploads/avatars`
+- `uploads/messages`
 
-```bash
-npm install
-cp .env.example .env
-mkdir -p data uploads/avatars uploads/messages
-npm start
-```
-
-Recommended production setup:
-
-- app listens on `127.0.0.1:3010`
-- nginx/caddy terminates HTTPS and proxies to the app
-- `DB_PATH=./data/messenger.db`
-- `UPLOADS_DIR=./uploads`
-
-### Option 2: Docker
-
-```bash
-cp .env.example .env
-mkdir -p data uploads/avatars uploads/messages
-docker compose up -d --build
-```
-
-App will be available on port `3010` unless changed in compose/proxy.
-
-## Reverse Proxy Example (Nginx)
-
-```nginx
-server {
-    listen 443 ssl;
-    server_name chat.example.com;
-
-    ssl_certificate /etc/letsencrypt/live/chat.example.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/chat.example.com/privkey.pem;
-
-    location / {
-        proxy_pass http://127.0.0.1:3010;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-    }
-}
-```
-
-## Raspberry Pi Notes
-
-- use `Node 20 LTS`
-- keep `data/` and `uploads/` on SSD if possible
-- run app with `systemd` or Docker
-- put nginx/caddy in front for HTTPS
-- keep SQLite backups
-
-## Health Check
+## Проверка здоровья
 
 `GET /health`
 
-Example response:
+Пример ответа:
 
 ```json
 {
@@ -189,7 +138,7 @@ Example response:
 }
 ```
 
-## Main API
+## Основные API-ручки
 
 - `POST /api/auth/register`
 - `POST /api/auth/login`
@@ -211,30 +160,6 @@ Example response:
 - `POST /api/rooms/:roomId/messages`
 - `POST /api/admin/users`
 
-## Files You Should Persist
+## Заметка
 
-- `data/messenger.db`
-- `uploads/avatars`
-- `uploads/messages`
-
-## Publish to GitHub
-
-This repo is now prepared for GitHub publication:
-
-- secrets are not committed by default
-- runtime data is ignored by `.gitignore`
-- deploy config is documented
-- Docker deployment is included
-
-To publish manually:
-
-```bash
-git init
-git add .
-git commit -m "Initial Pulse Messenger release"
-git branch -M main
-git remote add origin <YOUR_GITHUB_REPO_URL>
-git push -u origin main
-```
-
-If you want me to create the git repo locally and prepare the exact push commands for your GitHub repo URL, send me the repo URL.
+Если переносишь старую установку, сначала скопируй базу и `uploads`, а потом уже запускай установщик. Так меньше шансов что-то потерять.

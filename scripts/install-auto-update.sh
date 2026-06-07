@@ -7,15 +7,17 @@ TIMER_NAME="${TIMER_NAME:-zhur-messenger-update}"
 BRANCH="${BRANCH:-main}"
 REMOTE="${REMOTE:-origin}"
 SCHEDULE="${SCHEDULE:-*:0/2}"
+PORT="${PORT:-3010}"
+HOST="${HOST:-127.0.0.1}"
 
 if [ "$(id -u)" -ne 0 ]; then
-  echo "Run as root: sudo bash scripts/install-auto-update.sh"
+  echo "Запусти от root: sudo bash scripts/install-auto-update.sh"
   exit 1
 fi
 
 cat > "/etc/systemd/system/${TIMER_NAME}.service" <<EOF
 [Unit]
-Description=Update Pulse Messenger from GitHub
+Description=Обновление Pulse Messenger из GitHub
 
 [Service]
 Type=oneshot
@@ -23,12 +25,14 @@ Environment=APP_DIR=$APP_DIR
 Environment=SERVICE_NAME=$SERVICE_NAME
 Environment=BRANCH=$BRANCH
 Environment=REMOTE=$REMOTE
+Environment=PORT=$PORT
+Environment=HOST=$HOST
 ExecStart=/bin/bash $APP_DIR/scripts/update-from-github.sh
 EOF
 
 cat > "/etc/systemd/system/${TIMER_NAME}.timer" <<EOF
 [Unit]
-Description=Run Pulse Messenger auto-update periodically
+Description=Периодический автоапдейт Pulse Messenger
 
 [Timer]
 OnCalendar=$SCHEDULE

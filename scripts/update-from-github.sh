@@ -14,17 +14,17 @@ mkdir -p "$BACKUP_DIR"
 exec >>"$LOG_FILE" 2>&1
 
 echo
-echo "[$(date '+%F %T')] Starting auto-update check"
+echo "[$(date '+%F %T')] Запуск проверки автообновления"
 
 cd "$APP_DIR"
 
 if [ ! -d .git ]; then
-  echo "Not a git repository: $APP_DIR"
+  echo "Не git-репозиторий: $APP_DIR"
   exit 1
 fi
 
 if ! git diff --quiet || ! git diff --cached --quiet; then
-  echo "Working tree is dirty, skipping auto-update"
+  echo "Рабочее дерево не чистое, автообновление пропущено"
   exit 0
 fi
 
@@ -34,11 +34,11 @@ LOCAL_SHA="$(git rev-parse HEAD)"
 REMOTE_SHA="$(git rev-parse "$REMOTE/$BRANCH")"
 
 if [ "$LOCAL_SHA" = "$REMOTE_SHA" ]; then
-  echo "Already up to date: $LOCAL_SHA"
+  echo "Уже актуально: $LOCAL_SHA"
   exit 0
 fi
 
-echo "Updating from $LOCAL_SHA to $REMOTE_SHA"
+echo "Обновление с $LOCAL_SHA до $REMOTE_SHA"
 
 TIMESTAMP="$(date '+%Y%m%d-%H%M%S')"
 if [ -f "$APP_DIR/messenger.db" ]; then
@@ -63,7 +63,13 @@ if systemctl list-unit-files | grep -q "^${SERVICE_NAME}\.service"; then
   systemctl restart "$SERVICE_NAME"
 else
   pkill -f "node .*server/index.js" || true
+  if [ -f "$APP_DIR/.env" ]; then
+    set -a
+    # shellcheck disable=SC1090
+    . "$APP_DIR/.env"
+    set +a
+  fi
   nohup env PORT="${PORT:-3010}" HOST="${HOST:-127.0.0.1}" node "$APP_DIR/server/index.js" >/tmp/zhur-messenger.log 2>&1 &
 fi
 
-echo "[$(date '+%F %T')] Update complete"
+echo "[$(date '+%F %T')] Обновление завершено"
